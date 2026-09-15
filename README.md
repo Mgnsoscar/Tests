@@ -56,6 +56,15 @@ instruments' `*IDN?` strings, the DUT state and the settings. Figures are saved
 next to the data with the same name. A second run with the same name on the
 same day gets a `(2)` suffix rather than overwriting.
 
+The S11/S22 script sweeps a fixed 550–750 MHz range (401 points, 1 kHz IF
+bandwidth, 8 averages, −20 dBm) so one calibration serves every channel, and
+handles that calibration before measuring: it configures the sweep, then asks
+whether to **calibrate now** on the ZNLE's screen (and afterwards save the
+calibration to the instrument's cal pool under `CALIBRATION_NAME`), **load** a
+saved calibration, or **keep** the current correction. What was done, and the
+instrument's correction state and date, are recorded with every result.
+`--skip-calibration` skips the dialog.
+
 The compression measurement is built for trustworthy numbers: the MXG's step
 attenuator is held for the whole sweep (fixed at the smallest value that reaches
 the start level, so only the ALC moves the level and no attenuator switch puts a

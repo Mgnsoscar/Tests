@@ -173,6 +173,13 @@ class SimulatedBench:
             return "Rohde&Schwarz,ZNLE18,SIM,1.0"
         if query == "*OPC?":
             return "1"
+        if query.endswith("CORR:STAT?"):
+            # correction is on once a cal was loaded or explicitly enabled
+            return "1" if _last(w, r"^(MMEM:LOAD:CORR .*|SENS1:CORR:STAT ON)$") else "0"
+        if query.endswith("CORR:DATE?"):
+            return "'2026-09-15 10:02:11'"
+        if query.endswith("CORR:SST?"):
+            return "'CAL OK'"
         start = _last_float(w, r"^.*FREQ:STAR (\S+)$", 1e9)
         stop = _last_float(w, r"^.*FREQ:STOP (\S+)$", 2e9)
         points = int(_last_float(w, r"^.*SWE:POIN (\d+)$", 2))
