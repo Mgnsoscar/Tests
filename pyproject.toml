@@ -9,7 +9,7 @@ description = "Measurement project on top of LabKit: bench, DUT channels, signal
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "labkit[all] @ git+https://github.com/Mgnsoscar/LabKit.git@claude/repo-architecture-review-7ctsdz",
+    "labkit[all] @ git+https://github.com/Mgnsoscar/LabKit.git@main",
     "numpy>=1.26",
 ]
 
