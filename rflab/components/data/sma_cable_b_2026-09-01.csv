@@ -1,0 +1,14 @@
+# Component: SMA cable B
+# Characterized: 2026-09-01
+# Instrument: R&S ZNLE18 (example data)
+Frequency [MHz],Loss [dB]
+100.0,0.15
+500.0,0.33
+1000.0,0.47
+2000.0,0.68
+3000.0,0.84
+4000.0,0.98
+6000.0,1.22
+8000.0,1.43
+10000.0,1.62
+12000.0,1.80

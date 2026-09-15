@@ -1,0 +1,13 @@
+# Component: 20 dB coupler SN0042 (main-line insertion loss)
+# Characterized: 2026-08-20
+# Instrument: R&S ZNLE18 (example data)
+Frequency [MHz],Loss [dB]
+500.0,0.35
+1000.0,0.40
+2000.0,0.48
+3000.0,0.55
+4000.0,0.62
+6000.0,0.78
+8000.0,0.95
+10000.0,1.12
+12000.0,1.30

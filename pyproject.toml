@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rflab"
+version = "0.1.0"
+description = "Measurement project on top of LabKit: bench, DUT channels, signal-path components, measurements, results and analysis."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "labkit[all] @ git+https://github.com/Mgnsoscar/LabKit.git@claude/repo-architecture-review-7ctsdz",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "mypy>=1.10"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["rflab"]
+
+[tool.hatch.metadata]
+# LabKit is installed straight from its GitHub branch (a direct reference).
+allow-direct-references = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+disallow_any_generics = false
+files = ["rflab", "scripts", "tests"]
+warn_unused_configs = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = ["matplotlib.*", "pyvisa.*"]
+ignore_missing_imports = true
