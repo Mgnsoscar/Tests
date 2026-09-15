@@ -89,7 +89,7 @@ def plot_result(
         for i in order:
             objects.append(Marker(dut.frequency[i], dut.level[i]))
     objects += [
-        Title(f"{dut.dut} {dut.version} {dut.channel_label} — two-tone IMD"),
+        Title(f"{dut.title} — two-tone IMD"),
         XLabel("Frequency"),
         YLabel("Level at DUT output"),
         GridMajor(),

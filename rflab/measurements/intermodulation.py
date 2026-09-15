@@ -11,7 +11,7 @@ to the DUT output and computes OIP3 / IIP3.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Mapping, Optional
 
 import numpy as np
 
@@ -81,6 +81,7 @@ def measure(
     dut: DUT,
     channel: Channel,
     settings: IntermodulationSettings = IntermodulationSettings(),
+    state: Optional[Mapping[str, Any]] = None,
 ) -> IntermodulationResult:
     """Drive two tones and read tones and IM3 products at each centre frequency."""
     gen_a, gen_b, sa = bench.gen_a, bench.gen_b, bench.fsv
@@ -127,7 +128,7 @@ def measure(
         sa.measurement.enable_toi(False)
 
     return IntermodulationResult(
-        **base_fields(dut, channel, describe_instruments(gen_a, gen_b, sa), settings),
+        **base_fields(dut, channel, describe_instruments(gen_a, gen_b, sa), settings, state),
         center=Q(np.array(center_rows), "Hz"),
         tone=np.array(tone_rows, dtype=object),
         frequency=Q(np.array(f_rows), "Hz"),

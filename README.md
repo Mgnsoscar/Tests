@@ -11,15 +11,15 @@ rflab/
   bench.py            the instruments and their addresses (one shared instance)
   dut.py              Channel / DUT model
   duts/               one module per device: amplifier_x.py, ...
-  components/         the characterized cables, pads, couplers (+ data/ CSVs)
+  components/         the characterized cables, pads, couplers, adapters (+ data/ CSVs, characterize.py)
   measurements/       acquisition: compression, noise_figure, s_parameters, harmonics, intermodulation
   store.py            "(B) " folders, "{date} (B) " files, CSV save + load
   analysis/           at_dut() reference-plane correction, summaries, plots
   simulation.py       a simulated bench so everything runs without hardware
 scripts/
-  run_<measurement>.py   measure -> save [-> analyse]
+  run_<measurement>.py   edit the block at the top, then: measure -> save [-> analyse]
   analyze.py             load -> at_dut -> summarize -> plot, for saved results
-  characterize_component.py   measure a component on the VNA into components/data/
+  characterize_component.py   measure a component on the VNA (fixture de-embedded) into components/data/
 tests/                pytest suite against the simulated bench
 results/              the data (not committed)
 ```
@@ -28,24 +28,38 @@ results/              the data (not committed)
 
 ```bash
 pip install -e ".[dev]"                          # pulls LabKit from GitHub
-
-python scripts/run_compression.py --dut amplifier_x --channel 1 --plot
-python scripts/run_noise_figure.py --channel 1 2
-python scripts/run_s_parameters.py
-python scripts/run_harmonics.py --channel 1
-python scripts/run_intermodulation.py --channel 1
-
-python scripts/analyze.py --all --measurement Compression    # post-process later, no instruments
-python scripts/analyze.py "results/(B) Amplifier X v1.0/(B) Harmonics/2026-09-15 (B) Harmonics Ch1.csv" --show
 ```
 
-Add `--simulate` to any run script to exercise it against the simulated bench.
+Each run script has an **"Edit before running"** block at its top: the DUT
+module, the channels, the DUT's own attenuation setting (which you set on the
+device by hand, and the script records), and the measurement settings.
+Edit it, then run:
 
-Results land in `results/(B) <DUT> <version>/(B) <Measurement>/{date} (B) <Measurement> Ch<n>.csv`,
+```bash
+python scripts/run_compression.py --plot
+python scripts/run_noise_figure.py
+python scripts/run_s_parameters.py
+python scripts/run_harmonics.py
+python scripts/run_intermodulation.py
+
+python scripts/analyze.py --all --measurement Compression    # post-process later, no instruments
+python scripts/analyze.py "results/(B) Amplifier X v1.0/(B) Harmonics/2026-09-15 (B) Harmonics Ch1 attenuation 0 dB.csv" --show
+```
+
+Add `--simulate` to any script to exercise it against the simulated bench.
+
+Results land in
+`results/(B) <DUT> <version>/(B) <Measurement>/{date} (B) <Measurement> Ch<n> attenuation <x> dB.csv`,
 with a header that records the DUT, channel, timestamp, reference plane, the
 signal path on every port (each component with its characterization date), the
-instruments' `*IDN?` strings and the settings. Figures are saved next to the
-data with the same name.
+instruments' `*IDN?` strings, the DUT state and the settings. Figures are saved
+next to the data with the same name. A second run with the same name on the
+same day gets a `(2)` suffix rather than overwriting.
+
+The compression sweep stops itself: the small-signal gain is taken from the
+first few points and stepping ends once the gain has dropped `stop_compression`
+(2 dB by default) below it, so the DUT is never driven harder than needed to
+find the 1 dB point.
 
 ## Components and reference planes
 
@@ -58,15 +72,21 @@ needs the losses to compute NF, so they are loaded onto the analyzer as
 frequency tables from the channel's paths before measuring, and that result is
 saved already at the DUT plane.
 
-To add or re-characterize a component:
+To add or re-characterize a component, connect it between the VNA ports,
+edit the block at the top of `scripts/characterize_component.py` (the
+component's name, the **fixture** — the female-to-female adapters or other
+parts that had to be in the measurement but are not part of the component —
+and the sweep) and run it:
 
 ```bash
-python scripts/characterize_component.py "SMA cable A" --start 100MHz --stop 12GHz
+python scripts/characterize_component.py
 ```
 
-then register the new file in `rflab/components/__init__.py`. Keep the old
-file and entry: results record components as `"name (date)"`, and old results
-resolve to the characterization that was current when they were measured.
+The fixture's loss is de-embedded from the measurement; the file keeps both
+the de-embedded and the raw loss and names the fixture in its header. Then
+register the new file in `rflab/components/__init__.py`. Keep the old file and
+entry: results record components as `"name (date)"`, and old results resolve
+to the characterization that was current when they were measured.
 
 ## Adding a DUT
 

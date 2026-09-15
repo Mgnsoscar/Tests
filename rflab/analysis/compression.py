@@ -82,7 +82,7 @@ def plot_result(
         if summary.p_in_1db is not None and summary.p_out_1db is not None:
             objects.append(Marker(summary.p_in_1db, summary.p_out_1db, label=f"P1dB {label}"))
     objects += [
-        Title(f"{dut.dut} {dut.version} {dut.channel_label} — compression"),
+        Title(f"{dut.title} — compression"),
         XLabel("Input power at DUT"),
         YLabel("Output power at DUT"),
         GridMajor(),

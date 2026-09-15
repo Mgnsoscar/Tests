@@ -46,7 +46,7 @@ def plot_result(
     return plot(
         LinePlot(dut.frequency, dut.noise_figure, label="Noise figure"),
         LinePlot(dut.frequency, dut.gain, label="Gain", y_axis="right"),
-        Title(f"{dut.dut} {dut.version} {dut.channel_label} — noise figure"),
+        Title(f"{dut.title} — noise figure"),
         XLabel("Frequency"),
         YLabel("Noise figure"),
         YLabel("Gain", y_axis="right"),

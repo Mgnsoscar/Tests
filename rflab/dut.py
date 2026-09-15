@@ -91,7 +91,13 @@ class Channel:
 
 @dataclass(frozen=True)
 class DUT:
-    """A device under test: name, version, and its channels."""
+    """A device under test: name, version, and its channels.
+
+    Settings the DUT itself is put into by hand before a test — its own
+    attenuation, say — are not part of the definition: each run script states
+    them at its top, and they are recorded with the result as its ``state``
+    (in the file header and the file name).
+    """
 
     name: str
     version: str

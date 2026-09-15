@@ -15,7 +15,7 @@ import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime
 from time import sleep
-from typing import Any, ClassVar, TypeVar
+from typing import Any, ClassVar, Mapping, Optional, TypeVar
 
 from labkit.instruments import BaseInstrument
 from labkit.signal_path import SignalPath
@@ -62,6 +62,8 @@ class Result:
     instruments: dict[str, str] = field(default_factory=dict)
     #: The settings the measurement was taken with (scalars and quantities).
     settings: dict[str, Any] = field(default_factory=dict)
+    #: The DUT's own state during the measurement, e.g. ``{"attenuation": 6 dB}``.
+    state: dict[str, Any] = field(default_factory=dict)
     #: ``"instrument"`` (raw readings) or ``"dut"`` (path losses accounted for).
     reference_plane: str = "instrument"
 
@@ -86,6 +88,25 @@ class Result:
     def channel_label(self) -> str:
         return f"Ch{self.channel}"
 
+    @property
+    def state_label(self) -> str:
+        """``"attenuation 6 dB"`` — the DUT state for file names and titles (``""`` if none)."""
+        return " ".join(f"{key} {_format_state(value)}" for key, value in self.state.items())
+
+    @property
+    def title(self) -> str:
+        """``"Amplifier X v1.0 Ch1 attenuation 6 dB"`` — for plot titles."""
+        parts = [self.dut, self.version, self.channel_label]
+        if self.state:
+            parts.append(self.state_label)
+        return " ".join(parts)
+
+
+def _format_state(value: Any) -> str:
+    if is_quantity(value):
+        return f"{value:~g}"
+    return str(value)
+
 
 def result_metadata(result: Result) -> dict[str, Any]:
     """The base fields of a result as keyword arguments for ``from_columns``."""
@@ -97,6 +118,7 @@ def result_metadata(result: Result) -> dict[str, Any]:
         "paths": dict(result.paths),
         "instruments": dict(result.instruments),
         "settings": dict(result.settings),
+        "state": dict(result.state),
         "reference_plane": result.reference_plane,
     }
 
@@ -128,11 +150,18 @@ def _identity(dut: DUT, channel: Channel) -> dict[str, Any]:
     return {"dut": dut.name, "version": dut.version, "channel": channel.number, "paths": dict(channel.ports)}
 
 
-def base_fields(dut: DUT, channel: Channel, instruments: dict[str, str], settings: Any) -> dict[str, Any]:
-    """The base result fields for a measurement of `channel` on `dut`."""
+def base_fields(
+    dut: DUT,
+    channel: Channel,
+    instruments: dict[str, str],
+    settings: Any,
+    state: Optional[Mapping[str, Any]] = None,
+) -> dict[str, Any]:
+    """The base result fields for a measurement of `channel` on `dut` in `state`."""
     fields = _identity(dut, channel)
     fields["instruments"] = instruments
     fields["settings"] = settings_dict(settings)
+    fields["state"] = dict(state or {})
     return fields
 
 

@@ -1,41 +1,65 @@
-"""Shared command-line plumbing for the run_* scripts."""
+"""Shared plumbing for the run_* scripts.
+
+Each run script states *what to measure* in an "edit before running" block at
+its top (DUT, channels, the DUT's own attenuation setting, measurement
+settings) and hands it to :func:`run`, which handles the bench, the results
+store and the optional analysis. The only command-line flags are about *how*
+to run: ``--simulate``, ``--plot``, ``--show``, ``--root``.
+"""
 
 from __future__ import annotations
 
 import argparse
 import sys
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run from a checkout without installing
 
 from rflab import duts  # noqa: E402
 from rflab.analysis import PLOTTERS, SUMMARIZERS  # noqa: E402
 from rflab.bench import BenchLike, bench  # noqa: E402
-from rflab.dut import DUT, Channel  # noqa: E402
 from rflab.measurements._base import Result  # noqa: E402
 from rflab.store import ResultStore  # noqa: E402
 
 
-def parser(description: str) -> argparse.ArgumentParser:
+def _parser(description: str) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=description)
-    p.add_argument("--dut", default="amplifier_x", help="DUT module in rflab.duts (default: amplifier_x)")
-    p.add_argument("--channel", type=int, nargs="+", default=None, help="channel number(s); default: all")
-    p.add_argument("--root", default="results", help="results folder (default: results)")
     p.add_argument("--simulate", action="store_true", help="use the simulated bench instead of the lab")
     p.add_argument("--plot", action="store_true", help="also analyse and save a figure next to the data")
     p.add_argument("--show", action="store_true", help="show the figure interactively (implies --plot)")
+    p.add_argument("--root", default="results", help="results folder (default: results)")
     return p
 
 
 def run(
     description: str,
-    measure: Callable[[BenchLike, DUT, Channel], Result],
+    measure: Callable[..., Result],
+    *,
+    dut: str,
+    channels: Optional[Sequence[int]],
+    settings: Any,
+    state: Mapping[str, Any],
 ) -> None:
-    """Parse arguments, measure every requested channel, save, optionally analyse."""
-    args = parser(description).parse_args()
-    dut = duts.load(args.dut)
-    channels = dut.channels if args.channel is None else [dut.channel(n) for n in args.channel]
+    """Measure every requested channel with the hard-coded configuration, save, optionally analyse.
+
+    Parameters
+    ----------
+    measure:
+        The measurement's ``measure(bench, dut, channel, settings, state)``.
+    dut:
+        Module name in ``rflab.duts``.
+    channels:
+        Channel numbers, or ``None`` for every channel of the DUT.
+    settings:
+        The measurement's settings dataclass.
+    state:
+        The DUT's own settings during the run (e.g. ``{"attenuation": 6 dB}``);
+        recorded in the result header and file name.
+    """
+    args = _parser(description).parse_args()
+    device = duts.load(dut)
+    selected = device.channels if channels is None else [device.channel(n) for n in channels]
     store = ResultStore(args.root)
 
     if args.simulate:
@@ -45,9 +69,10 @@ def run(
     else:
         b = bench()
 
-    for channel in channels:
-        print(f"{dut.label} {channel.label}: measuring ...", flush=True)
-        result = measure(b, dut, channel)
+    state_text = ", ".join(f"{k} {v:~}" if hasattr(v, "to") else f"{k} {v}" for k, v in state.items())
+    for channel in selected:
+        print(f"{device.label} {channel.label}" + (f" ({state_text})" if state_text else "") + ": measuring ...", flush=True)
+        result = measure(b, device, channel, settings, state)
         path = store.save(result)
         print(f"  saved {path}")
         if args.plot or args.show:

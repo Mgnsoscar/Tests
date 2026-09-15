@@ -10,7 +10,7 @@ magnitude (the wave passes the path going in and coming back).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Mapping, Optional
 
 import numpy as np
 
@@ -75,6 +75,7 @@ def measure(
     dut: DUT,
     channel: Channel,
     settings: SParameterSettings = SParameterSettings(),
+    state: Optional[Mapping[str, Any]] = None,
 ) -> SParameterResult:
     """Sweep the band and read each requested S-parameter as complex data."""
     vna = bench.vna
@@ -107,7 +108,7 @@ def measure(
 
     assert frequency is not None, "at least one S-parameter must be requested"
     return SParameterResult(
-        **base_fields(dut, channel, describe_instruments(vna), settings),
+        **base_fields(dut, channel, describe_instruments(vna), settings, state),
         frequency=frequency,
         magnitudes=magnitudes,
         phases=phases,

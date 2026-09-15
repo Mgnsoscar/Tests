@@ -10,7 +10,7 @@ and loaded as K30 loss tables; a port with no path gets a 0 dB spot loss.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Mapping, Optional
 
 import numpy as np
 
@@ -65,6 +65,7 @@ def measure(
     dut: DUT,
     channel: Channel,
     settings: NoiseFigureSettings = NoiseFigureSettings(),
+    state: Optional[Mapping[str, Any]] = None,
 ) -> NoiseFigureResult:
     """Run the K30 noise-figure sweep across the channel with path losses applied."""
     sa = bench.fsv
@@ -97,7 +98,7 @@ def measure(
     gain_db = nf.get_gain()
 
     return NoiseFigureResult(
-        **base_fields(dut, channel, describe_instruments(sa), settings),
+        **base_fields(dut, channel, describe_instruments(sa), settings, state),
         reference_plane="dut",
         frequency=freqs.to("Hz"),
         noise_figure=Q(np.array(nf_db, dtype=np.float64), "dB"),

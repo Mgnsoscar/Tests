@@ -35,7 +35,7 @@ def plot_result(
     lines = [LinePlot(dut.frequency, m, label=name) for name, m in dut.magnitudes.items()]
     return plot(
         *lines,
-        Title(f"{dut.dut} {dut.version} {dut.channel_label} — S-parameters"),
+        Title(f"{dut.title} — S-parameters"),
         XLabel("Frequency"),
         YLabel("Magnitude"),
         GridMajor(),

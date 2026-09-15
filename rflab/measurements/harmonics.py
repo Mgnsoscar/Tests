@@ -11,7 +11,7 @@ tables essential, since the components were rarely characterized at 3·f0.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Mapping, Optional
 
 import numpy as np
 
@@ -73,6 +73,7 @@ def measure(
     dut: DUT,
     channel: Channel,
     settings: HarmonicsSettings = HarmonicsSettings(),
+    state: Optional[Mapping[str, Any]] = None,
 ) -> HarmonicsResult:
     """Measure the fundamental and harmonics at each test frequency."""
     gen, sa = bench.gen_a, bench.fsv
@@ -106,7 +107,7 @@ def measure(
         sa.measurement.enable_harmonics(False)
 
     return HarmonicsResult(
-        **base_fields(dut, channel, describe_instruments(gen, sa), settings),
+        **base_fields(dut, channel, describe_instruments(gen, sa), settings, state),
         fundamental=Q(np.array(f0_rows), "Hz"),
         order=np.array(order_rows, dtype=np.int64),
         frequency=Q(np.array(f_rows), "Hz"),

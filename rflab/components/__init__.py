@@ -38,6 +38,8 @@ __all__ = [
     "SMA_CABLE_B",
     "COUPLER_20DB",
     "PAD_10DB",
+    "SMA_FF_ADAPTER_A",
+    "SMA_FF_ADAPTER_B",
 ]
 
 #: Where the measured loss tables live.
@@ -99,3 +101,9 @@ SMA_CABLE_A = tabulated("SMA cable A", "sma_cable_a_2026-09-01.csv", date(2026, 
 SMA_CABLE_B = tabulated("SMA cable B", "sma_cable_b_2026-09-01.csv", date(2026, 9, 1))
 COUPLER_20DB = tabulated("20 dB coupler SN0042", "coupler_20db_2026-08-20.csv", date(2026, 8, 20))
 PAD_10DB = flat("10 dB pad SN1234", Q(10.2, "dB"), date(2026, 8, 20))
+
+# Female-to-female adapters used to bridge male-ended cables to the VNA test
+# ports when characterizing them (see rflab.components.characterize). Placeholder
+# losses: characterize the adapter pair and split it, then replace these.
+SMA_FF_ADAPTER_A = flat("SMA F-F adapter A", Q(0.08, "dB"), date(2026, 8, 20))
+SMA_FF_ADAPTER_B = flat("SMA F-F adapter B", Q(0.08, "dB"), date(2026, 8, 20))

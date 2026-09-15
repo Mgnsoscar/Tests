@@ -63,7 +63,7 @@ def plot_result(
         )
     return plot(
         *lines,
-        Title(f"{dut.dut} {dut.version} {dut.channel_label} — harmonics"),
+        Title(f"{dut.title} — harmonics"),
         XLabel("Harmonic order", show_unit=False),
         YLabel("Level at DUT output"),
         GridMajor(),

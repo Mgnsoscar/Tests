@@ -6,13 +6,14 @@ Every folder name starts with ``"(B) "`` and every file name with
     results/
       (B) Amplifier X v1.0/
         (B) Compression/
-          2026-09-15 (B) Compression Ch1.csv
-          2026-09-15 (B) Compression Ch1 (2).csv      <- same day, second run
-          2026-09-15 (B) Compression Ch1.png          <- figures go next to the data
+          2026-09-15 (B) Compression Ch1 attenuation 0 dB.csv
+          2026-09-15 (B) Compression Ch1 attenuation 6 dB.csv
+          2026-09-15 (B) Compression Ch1 attenuation 6 dB (2).csv   <- same day, second run
+          2026-09-15 (B) Compression Ch1 attenuation 6 dB.png       <- figures next to the data
 
 The CSV header records everything the result object carries (DUT, channel,
 timestamp, reference plane, the signal path on each port, instrument
-identities, settings), so :meth:`ResultStore.load` rebuilds the very same
+identities, the DUT state, settings), so :meth:`ResultStore.load` rebuilds the very same
 result object — ready for :func:`rflab.analysis.at_dut` and the rest of the
 analysis layer, without touching an instrument.
 """
@@ -35,6 +36,7 @@ __all__ = ["ResultStore"]
 _PATH_PREFIX = "Path "
 _INSTRUMENT_PREFIX = "Instrument "
 _SETTING_PREFIX = "Setting "
+_STATE_PREFIX = "State "
 _COUNTER = re.compile(r"^(?P<base>.*?)(?: \((?P<n>\d+)\))?$")
 
 
@@ -67,9 +69,14 @@ class ResultStore:
         return self.root / f"{self.prefix}{result.dut} {result.version}" / f"{self.prefix}{result.measurement}"
 
     def basename(self, result: Result, suffix: str = "") -> str:
-        """``"2026-09-15 (B) Compression Ch1"`` (plus `suffix`), without extension."""
+        """``"2026-09-15 (B) Compression Ch1 attenuation 6 dB"`` (plus `suffix`), without extension.
+
+        The DUT state (its attenuation setting) is part of the name, so runs at
+        different settings never collide.
+        """
         day = result.timestamp.date().isoformat()
-        return f"{day} {self.prefix}{result.measurement} {result.channel_label}{suffix}"
+        state = f" {result.state_label}" if result.state else ""
+        return f"{day} {self.prefix}{result.measurement} {result.channel_label}{state}{suffix}"
 
     def _unique(self, folder: Path, basename: str, extension: str) -> str:
         """`basename`, or ``"basename (2)"`` etc., so an existing file is not overwritten."""
@@ -105,6 +112,8 @@ class ResultStore:
             values.append(Value(f"{_PATH_PREFIX}{port}", path.describe(), unit=None))
         for name, idn in result.instruments.items():
             values.append(Value(f"{_INSTRUMENT_PREFIX}{name}", idn, unit=None))
+        for key, value in result.state.items():
+            values.append(Value(f"{_STATE_PREFIX}{key}", value, unit="" if is_quantity(value) else None))
         for key, value in result.settings.items():
             values.append(Value(f"{_SETTING_PREFIX}{key}", value, unit="" if is_quantity(value) else None))
         columns = [Column(label, data) for label, data in result.columns().items()]
@@ -136,6 +145,11 @@ class ResultStore:
             for key, value in table.values.items()
             if key.startswith(_SETTING_PREFIX)
         }
+        state = {
+            key[len(_STATE_PREFIX):]: value
+            for key, value in table.values.items()
+            if key.startswith(_STATE_PREFIX)
+        }
         meta: dict[str, Any] = {
             "dut": str(table.value("DUT")),
             "version": str(table.value("Version")),
@@ -145,6 +159,7 @@ class ResultStore:
             "paths": paths,
             "instruments": instruments,
             "settings": settings,
+            "state": state,
         }
         return cls.from_columns(meta, table.columns)
 
