@@ -57,9 +57,12 @@ def _at_dut(result: Result, extrapolate: bool = False) -> Result:
 def _compression(result: CompressionResult, extrapolate: bool = False) -> CompressionResult:
     if result.reference_plane == "dut":
         return result
+    out = result.path("out")
     return result.replace(
         p_in=result.path("in").after(result.p_in, result.frequency, extrapolate),
-        p_out=result.path("out").before(result.p_out, result.frequency, extrapolate),
+        p_out=out.before(result.p_out, result.frequency, extrapolate),
+        # the noise floor is an analyzer-port level too: move it with the data
+        noise_floor=out.before(result.noise_floor, result.frequency, extrapolate),
         reference_plane="dut",
     )
 

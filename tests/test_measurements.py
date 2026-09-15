@@ -41,9 +41,18 @@ def test_compression_sweeps_levels_and_records_context(bench: SimulatedBench, du
     np.testing.assert_allclose(result.p_out.magnitude, expected)
     np.testing.assert_allclose(result.frequency.to("GHz").magnitude, [2.3, 2.3, 2.3])
 
+    np.testing.assert_allclose(result.noise_floor.magnitude, [model.noise_floor_dbm] * 3)
+    assert result.settings["generator_attenuation"] == Q(15, "dB")  # -30 dBm start needs 15 dB held
+
     w = bench.fsv_backend.writes
     assert "FREQ:CENT 2300000000.0" in w and "INIT:CONT OFF" in w and "CALC:MARK1:MAX" in w
-    assert bench.gen_a_backend.writes[-1] == "OUTP OFF"  # RF left off
+    assert "DET1 RMS" in w and "DISP:TRAC1:MODE AVER" in w and "SWE:COUN 5" in w
+    assert any(c.startswith("DISP:TRAC:Y:SCAL:RLEV ") for c in w)  # reference level tracked
+
+    g = bench.gen_a_backend.writes
+    assert "POW:ALC ON" in g and "POW:ATT:AUTO OFF" in g and "POW:ATT 15.0DB" in g
+    assert g.index("POW:ATT:AUTO OFF") < g.index("OUTP ON")  # attenuator held before RF on
+    assert g[-2:] == ["OUTP OFF", "POW:ATT:AUTO ON"]  # RF left off, attenuator released
 
 
 def test_noise_figure_loads_path_losses_on_the_instrument(bench: SimulatedBench, dut: DUT, model: AmplifierModel) -> None:

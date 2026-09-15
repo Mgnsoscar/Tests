@@ -56,10 +56,18 @@ instruments' `*IDN?` strings, the DUT state and the settings. Figures are saved
 next to the data with the same name. A second run with the same name on the
 same day gets a `(2)` suffix rather than overwriting.
 
-The compression sweep stops itself: the small-signal gain is taken from the
-first few points and stepping ends once the gain has dropped `stop_compression`
-(2 dB by default) below it, so the DUT is never driven harder than needed to
-find the 1 dB point.
+The compression measurement is built for trustworthy numbers: the MXG's step
+attenuator is held for the whole sweep (fixed at the smallest value that reaches
+the start level, so only the ALC moves the level and no attenuator switch puts a
+bump in the curve); the FSV reads with an RMS detector, trace averaging, and a
+reference level tracked to about 10 dB above the signal; the analyzer's noise
+floor is measured with the generator off and saved with the data; and both
+instruments' error queues are checked. The sweep stops itself once the
+moving-median gain has fallen `stop_compression` (2 dB by default) below its
+peak, so the DUT is never driven harder than needed. The analysis derives the
+small-signal gain from the plateau of the smoothed gain curve — never from
+"the first few points" — and ignores readings closer than `noise_margin` to
+the noise floor.
 
 ## Components and reference planes
 

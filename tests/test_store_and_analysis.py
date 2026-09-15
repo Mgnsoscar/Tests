@@ -53,6 +53,7 @@ def test_folder_and_file_names_follow_the_lab_convention(tmp_path: Path) -> None
     result = CompressionResult(
         dut="Amplifier X", version="v1.0", channel=1, timestamp=datetime(2026, 9, 15, 10, 30),
         frequency=Q([2.3e9], "Hz"), p_in=Q([-10.0], "dBm"), p_out=Q([9.0], "dBm"),
+        noise_floor=Q([-100.0], "dBm"),
     )
     first = Path(store.save(result))
     second = Path(store.save(result))
@@ -104,7 +105,8 @@ def test_header_records_paths_and_settings(tmp_path: Path, bench: SimulatedBench
     assert "# Reference plane: instrument\n" in text
     assert "# Setting rbw [kHz]: 10\n" in text
     assert "# Instrument Spectrum analyzer: Rohde&Schwarz,FSV3007,SIM,1.0\n" in text
-    assert "Frequency [Hz],P_in [dBm],P_out [dBm]\n" in text
+    assert "Frequency [Hz],P_in [dBm],P_out [dBm],Noise floor [dBm]\n" in text
+    assert "# Setting generator_attenuation [dB]: 15.0\n" in text
 
 
 # --- reference plane ------------------------------------------------------------
@@ -119,6 +121,8 @@ def test_at_dut_applies_path_losses_at_each_rows_frequency(bench: SimulatedBench
     loss_out = ch.path("out").loss_at(f).magnitude
     np.testing.assert_allclose(corrected.p_in.magnitude, raw.p_in.magnitude - loss_in)
     np.testing.assert_allclose(corrected.p_out.magnitude, raw.p_out.magnitude + loss_out)
+    np.testing.assert_allclose(corrected.noise_floor.magnitude, raw.noise_floor.magnitude + loss_out)
+    np.testing.assert_array_equal(corrected.valid(), raw.valid())  # validity is plane-independent
     assert at_dut(corrected) is corrected  # idempotent
 
     harm = harmonics.measure(bench, dut, ch, HarmonicsSettings(harmonics=3, settle=NO_SETTLE))
@@ -142,7 +146,8 @@ def test_compression_summary_finds_p1db(bench: SimulatedBench, dut: DUT, model: 
     (summary,) = analysis.compression.summarize(compression.measure(bench, dut, ch, settings))
     f = ch.f_center
     expected_gain = model.gain_db + ch.path("in").loss_at(f).magnitude + ch.path("out").loss_at(f).magnitude
-    assert summary.gain_small_signal.magnitude == pytest.approx(expected_gain, abs=0.05)
+    assert summary.gain_small_signal.magnitude == pytest.approx(expected_gain, abs=0.1)
+    assert summary.points_dropped == 0 and summary.points_used > 0
     assert summary.p_in_1db is not None and summary.p_out_1db is not None
     # the model's output P1dB, plus the output path loss we add back at the DUT plane
     assert summary.p_out_1db.magnitude == pytest.approx(

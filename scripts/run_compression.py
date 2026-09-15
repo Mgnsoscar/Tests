@@ -21,6 +21,10 @@ SETTINGS = CompressionSettings(
     p_step=Q(1, "dB"),
     stop_compression=Q(2, "dB"),    # stop when gain has dropped this far (past the 1 dB point)
     n_frequencies=1,                # 1 = band centre only
+    attenuator_hold=True,           # MXG step attenuator fixed for the whole sweep (no bumps)
+    generator_attenuation=None,     # None = smallest 5 dB step that reaches p_start; or e.g. Q(15, "dB")
+    averages=5,                     # FSV sweeps averaged per reading (RMS detector)
+    noise_margin=Q(15, "dB"),       # readings closer than this to the noise floor are not used
 )
 # ─────────────────────────────────────────────────────────────────────────────
 

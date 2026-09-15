@@ -59,24 +59,58 @@ def test_no_state_keeps_plain_names(tmp_path: Path, bench: SimulatedBench, dut: 
 def test_compression_stops_once_compressed(bench: SimulatedBench, dut: DUT, model: AmplifierModel) -> None:
     settings = CompressionSettings(
         p_start=Q(-40, "dBm"), p_stop=Q(20, "dBm"), p_step=Q(1, "dB"),
-        n_linear=3, stop_compression=Q(2, "dB"), settle=NO_SETTLE,
+        stop_compression=Q(2, "dB"), settle=NO_SETTLE,
     )
     result = compression.measure(bench, dut, dut.channel(1), settings)
     p_in = result.p_in.magnitude
-    gain = result.p_out.magnitude - p_in
+    gain = list(result.p_out.magnitude - p_in)
     assert len(p_in) < len(compression.levels(settings))  # did not run to p_stop
-    small_signal = np.mean(gain[:3])
-    assert gain[-1] <= small_signal - 2.0          # stopped once 2 dB compressed ...
-    assert gain[-2] > small_signal - 2.0           # ... and not a step later
+    window = compression.MEDIAN_WINDOW
+    smoothed = [compression.moving_median(gain[: i + 1]) for i in range(window - 1, len(gain))]
+    reference = max(smoothed)
+    assert smoothed[-1] <= reference - 2.0          # stopped once the moving-median gain fell 2 dB ...
+    assert smoothed[-2] > reference - 2.0           # ... and not a step later
     assert p_in[-1] < 20.0
     # the 1 dB point is inside the data that was taken
-    assert np.any(gain <= small_signal - 1.0) and np.any(gain > small_signal - 1.0)
+    assert any(g <= reference - 1.0 for g in gain) and any(g > reference - 1.0 for g in gain)
+
+
+def test_bad_first_points_do_not_set_the_gain_reference(bench: SimulatedBench, dut: DUT, model: AmplifierModel) -> None:
+    """Readings near the noise floor are excluded, and one wild point cannot define the plateau."""
+    from rflab.analysis import compression as analysis
+
+    settings = CompressionSettings(p_start=Q(-40, "dBm"), p_stop=Q(0, "dBm"), p_step=Q(1, "dB"), settle=NO_SETTLE)
+    result = compression.measure(bench, dut, dut.channel(2), settings)
+    p_out = np.array(result.p_out.magnitude)
+    # corrupt the first three readings: two buried in the noise, one wildly high
+    p_out[0] = model.noise_floor_dbm + 5.0
+    p_out[1] = model.noise_floor_dbm + 2.0
+    p_out[2] = p_out[2] + 6.0
+    corrupted = result.replace(p_out=Q(p_out, "dBm"))
+    assert list(corrupted.valid()[:3]) == [False, False, True]
+
+    (clean,) = analysis.summarize(result)
+    (robust,) = analysis.summarize(corrupted)
+    assert robust.points_dropped == 2
+    assert robust.gain_small_signal.magnitude == pytest.approx(clean.gain_small_signal.magnitude, abs=0.05)
+    assert robust.p_out_1db is not None and clean.p_out_1db is not None
+    assert robust.p_out_1db.magnitude == pytest.approx(clean.p_out_1db.magnitude, abs=0.05)
 
 
 def test_compression_runs_to_p_stop_when_never_compressed(bench: SimulatedBench, dut: DUT) -> None:
     settings = CompressionSettings(p_start=Q(-60, "dBm"), p_stop=Q(-50, "dBm"), p_step=Q(2, "dB"), settle=NO_SETTLE)
     result = compression.measure(bench, dut, dut.channel(1), settings)
     assert len(result.p_in) == len(compression.levels(settings))
+    assert result.settings["generator_attenuation"] == Q(45, "dB")  # -60 dBm start: 45 dB held
+
+
+def test_generator_attenuation_choice() -> None:
+    assert compression.generator_attenuation(CompressionSettings(p_start=Q(-10, "dBm"))) == Q(0, "dB")
+    assert compression.generator_attenuation(CompressionSettings(p_start=Q(-15, "dBm"))) == Q(0, "dB")
+    assert compression.generator_attenuation(CompressionSettings(p_start=Q(-16, "dBm"))) == Q(5, "dB")
+    assert compression.generator_attenuation(CompressionSettings(p_start=Q(-30, "dBm"))) == Q(15, "dB")
+    explicit = CompressionSettings(p_start=Q(-30, "dBm"), generator_attenuation=Q(20, "dB"))
+    assert compression.generator_attenuation(explicit) == Q(20, "dB")
 
 
 # --- characterization with fixture de-embedding -------------------------------
