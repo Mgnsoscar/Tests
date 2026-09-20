@@ -72,6 +72,8 @@ class AmplifierModel:
     edge_margin_hz: float = 5e6
     #: Peak-to-peak gain ripple inside the band.
     ripple_db: float = 0.4
+    #: RMS measurement noise added to every VNA reading (0 = exact, as the tests need).
+    noise_db: float = 0.0
 
     # -- the DUT's switch settings (set by hand on the real device) ----------
     #: The DUT's own attenuator setting; it takes this much off the gain.
@@ -155,6 +157,7 @@ class SimulatedBench:
         self.model = model or AmplifierModel()
         #: The signal paths between the instruments and the DUT ports (none until ``set_dut``).
         self.paths: dict[str, SignalPath] = {}
+        self._rng = np.random.default_rng(seed=7)
         self.gen_a, self.gen_a_backend = mock_instrument(
             N5183A, name="Signal generator A", responses={"*IDN?": "Agilent Technologies, N5183A, SIM, 1.0"}
         )
@@ -301,6 +304,9 @@ class SimulatedBench:
                 db = [self.model.s21_db(f) - self._loss("in", f) - self._loss("out", f) for f in grid]
             else:
                 db = [-30.0] * points
+            if self.model.noise_db > 0:
+                noise = self._rng.normal(0.0, self.model.noise_db, len(db))
+                db = [v + n for v, n in zip(db, noise)]
             return ",".join(f"{_num(10 ** (v / 20))},0.0" for v in db)
         return ""
 

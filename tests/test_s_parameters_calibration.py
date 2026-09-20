@@ -25,11 +25,11 @@ def _dialog(bench: SimulatedBench, answers: list[str]) -> tuple[str, list[str]]:
 
 # --- sweep configuration -----------------------------------------------------
 
-def test_configure_sets_the_fixed_range_before_any_calibration(bench: SimulatedBench, dut: DUT) -> None:
-    s_parameters.configure(bench.vna, dut.channel(1), SParameterSettings())
+def test_configure_sets_the_range_before_any_calibration(bench: SimulatedBench, dut: DUT) -> None:
+    s_parameters.configure(bench.vna, dut.channel(1), SParameterSettings())   # default: band ± 25 MHz
     w = bench.vna_backend.writes
-    assert any(c.endswith("FREQ:STAR 550000000.0") for c in w)
-    assert any(c.endswith("FREQ:STOP 750000000.0") for c in w)
+    assert any(c.endswith("FREQ:STAR 555000000.0") for c in w)
+    assert any(c.endswith("FREQ:STOP 645000000.0") for c in w)
     assert any(c.endswith("SWE:POIN 401") for c in w)
     assert "SENS1:BAND:RES 1000.0" in w
     assert any("AVER:COUN 8" in c for c in w)
@@ -37,10 +37,13 @@ def test_configure_sets_the_fixed_range_before_any_calibration(bench: SimulatedB
     assert not any("MMEM:" in c for c in w)  # configuring never touches the calibration
 
 
-def test_channel_band_is_used_when_no_fixed_range(bench: SimulatedBench, dut: DUT) -> None:
-    settings = SParameterSettings(frequency_range=None, points=11)
-    start, stop = s_parameters.sweep_range(dut.channel(1), settings)
+def test_sweep_range_is_the_band_plus_margin_or_the_fixed_range(dut: DUT) -> None:
+    start, stop = s_parameters.sweep_range(dut.channel(1), SParameterSettings(margin=Q(0, "MHz")))
     assert start == Q(580, "MHz") and stop == Q(620, "MHz")
+    start, stop = s_parameters.sweep_range(dut.channel(2), SParameterSettings(margin=Q(10, "MHz")))
+    assert start == Q(670, "MHz") and stop == Q(730, "MHz")
+    fixed = SParameterSettings(frequency_range=(Q(550, "MHz"), Q(750, "MHz")))
+    assert s_parameters.sweep_range(dut.channel(1), fixed) == (Q(550, "MHz"), Q(750, "MHz"))
 
 
 # --- calibration dialog ---------------------------------------------------------
@@ -99,10 +102,11 @@ def test_dialog_repeats_until_a_valid_choice(bench: SimulatedBench) -> None:
 
 def test_measure_after_dialog_records_correction_and_band(bench: SimulatedBench, dut: DUT, model: AmplifierModel) -> None:
     ch = dut.channel(1)
-    s_parameters.configure(bench.vna, ch, SParameterSettings(points=5))
+    fixed = SParameterSettings(frequency_range=(Q(550, "MHz"), Q(750, "MHz")), points=5)
+    s_parameters.configure(bench.vna, ch, fixed)
     outcome, _ = _dialog(bench, ["l", ""])
     result = s_parameters.measure(
-        bench, dut, ch, SParameterSettings(points=5), {"attenuation": Q(0, "dB")},
+        bench, dut, ch, fixed, {"attenuation": Q(0, "dB")},
         configure_sweep=False, calibration=outcome,
     )
     assert result.settings["calibration"] == "loaded amp 550-750MHz.cal"

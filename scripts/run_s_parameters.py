@@ -37,14 +37,15 @@ CHANNELS = None                     # channel numbers, or None for all channels
 DUT_ATTENUATION = Q(0, "dB")        # the DUT's own attenuation setting (set it by hand)
 DUT_BYPASS = False                  # the DUT's bypass switch (set it by hand)
 SETTINGS = SParameterSettings(
-    frequency_range=(Q(550, "MHz"), Q(750, "MHz")),   # one sweep (and one calibration) for all channels
-    points=401,                     # 0.5 MHz per point over 200 MHz
+    frequency_range=None,           # None = each channel's band ± margin (its own sweep and calibration);
+    margin=Q(25, "MHz"),            #   or e.g. (Q(550, "MHz"), Q(750, "MHz")) for one sweep and one calibration
+    points=401,
     if_bandwidth=Q(1, "kHz"),
     power=Q(-20, "dBm"),            # keep an active DUT's input well out of compression
     average_count=8,
     parameters=("S11", "S21", "S22"),   # S21 = gain (the requirements), S11/S22 = match
 )
-CALIBRATION_NAME = "amplifier_x 550-750MHz"   # cal-pool name offered when saving or loading
+CALIBRATION_NAME = "amplifier_x"    # cal-pool name offered when saving or loading (channel band appended)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -74,7 +75,8 @@ def main() -> None:
             if args.skip_calibration or args.simulate:
                 done_ranges[key] = "kept (no dialog)"
             else:
-                done_ranges[key] = calibration_dialog(b.vna, CALIBRATION_NAME)
+                name = f"{CALIBRATION_NAME} {start.to('MHz'):~.6g}-{stop.to('MHz'):~.6g}".replace(" MHz-", "-")
+                done_ranges[key] = calibration_dialog(b.vna, name)
         print(f"{device.label} {channel.label} ({describe_state(state)}): measuring ...", flush=True)
         result = measure(b, device, channel, SETTINGS, state, configure_sweep=False, calibration=done_ranges[key])
         path = store.save(result)

@@ -58,14 +58,16 @@ instruments' `*IDN?` strings, the DUT state and the settings. Figures are saved
 next to the data with the same name. A second run with the same name on the
 same day gets a `(2)` suffix rather than overwriting.
 
-The S-parameter script measures S11, S21 and S22 over a fixed 550–750 MHz
-range (401 points, 1 kHz IF bandwidth, 8 averages, −20 dBm) so one
-calibration serves every channel, and handles that calibration before
-measuring: it configures the sweep, then asks whether to **calibrate now** on
-the ZNLE's screen (and afterwards save the calibration to the instrument's cal
-pool under `CALIBRATION_NAME`), **load** a saved calibration, or **keep** the
-current correction. What was done, and the instrument's correction state and
-date, are recorded with every result. `--skip-calibration` skips the dialog.
+The S-parameter script measures S11, S21 and S22 over each channel's band plus
+a 25 MHz margin on either side (401 points, 1 kHz IF bandwidth, 8 averages,
+−20 dBm) — only the region the requirements are about — and handles the
+calibration before measuring: it configures the sweep, then asks whether to
+**calibrate now** on the ZNLE's screen (and afterwards save the calibration to
+the instrument's cal pool under `CALIBRATION_NAME` plus the sweep range),
+**load** a saved calibration, or **keep** the current correction. What was
+done, and the instrument's correction state and date, are recorded with every
+result. `--skip-calibration` skips the dialog. Set a fixed `frequency_range`
+covering every channel instead if one calibration should serve them all.
 
 ## Channel requirements report
 
@@ -86,13 +88,16 @@ them to the DUT plane, and answers the specification:
   `f_start` and above `f_stop`; the **passband variation** — every in-band
   point within Z dB of the centre gain. X, Y and Z are the channel's
   `requirements` in its DUT definition (`ChannelRequirements`), and every
-  configuration is checked. The figure shows all configurations with main and
-  max gain bold, the band edges and cutoff frequencies, the cutoff points
-  marked with their rejection and verdict, and a second panel with the
-  passband gain relative to the centre gain against the ±Z limit.
+  configuration is checked. The S21 page shows every configuration over the
+  measured range with main and max gain bold, the passband shaded, the cutoff
+  frequencies as labelled ticks and the cutoff points as dots; a second panel
+  shows the passband gain relative to the centre gain against the ±Z limit.
+  Every number and verdict sits in a results column beside the plots, one row
+  per configuration, so nothing has to be read off the curves.
 - **S11** (and S22) — every configuration as a thin trace and their
-  **average** (a power average of the dB values) bold on top, with the worst
-  in-band value of the average marked.
+  **average** (a power average of the dB values) bold on top, the worst
+  in-band value of the average marked, and each configuration's worst in-band
+  value in the column.
 
 The text report and the figures are saved next to the S-parameter data as
 `... report.txt`, `... report S21.png`, `... report S11.png`, `... report S22.png`.

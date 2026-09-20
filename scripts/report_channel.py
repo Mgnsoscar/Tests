@@ -67,7 +67,10 @@ def main() -> None:
 
     if args.simulate:
         b = make_bench(args)
-        settings = SParameterSettings(points=201)
+        model = getattr(b, "model", None)
+        if model is not None:
+            model.noise_db = 0.06        # a little measurement noise, so the figures look like real data
+        settings = SParameterSettings(points=181)
         for channel in channels:
             for state in SIMULATED_CONFIGURATIONS:
                 set_dut_state(b, channel, state)

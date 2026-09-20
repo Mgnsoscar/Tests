@@ -19,10 +19,12 @@ bypass). Measure every configuration of interest, then
 filter cutoff, the passband variation, and the S11 averaged over all
 configurations.
 
-Defaults are chosen for channels in the 550–750 MHz region: a 401-point sweep
-over that range (0.5 MHz per point), 1 kHz IF bandwidth, 8 sweeps averaged,
-and −20 dBm source power so an active DUT's input is measured well below
-compression.
+By default each channel sweeps only the region that matters: its band plus a
+`margin` on each side (25 MHz, enough to reach a cutoff 20 MHz outside the
+band), 401 points, 1 kHz IF bandwidth, 8 sweeps averaged, and −20 dBm source
+power so an active DUT's input is measured well below compression. A fixed
+`frequency_range` covering every channel can be given instead, so that one
+calibration serves all of them.
 """
 
 from __future__ import annotations
@@ -48,9 +50,12 @@ _PHASE_SUFFIX = " phase"
 class SParameterSettings:
     """How the reflection sweep is taken."""
 
-    #: Sweep range; ``None`` sweeps the channel's own band. A fixed range that
-    #: covers every channel lets one calibration serve all of them.
-    frequency_range: Optional[tuple[Quantity, Quantity]] = (Q(550, "MHz"), Q(750, "MHz"))
+    #: Sweep range; ``None`` sweeps the channel's own band plus `margin` on
+    #: each side. A fixed range that covers every channel lets one
+    #: calibration serve all of them.
+    frequency_range: Optional[tuple[Quantity, Quantity]] = None
+    #: How far beyond the band edges the sweep reaches when `frequency_range` is ``None``.
+    margin: Quantity = Q(25, "MHz")
     points: int = 401
     if_bandwidth: Quantity = Q(1, "kHz")
     #: Source power; keep an active DUT well out of compression.
@@ -65,7 +70,7 @@ def sweep_range(channel: Channel, settings: SParameterSettings) -> tuple[Quantit
     """The ``(start, stop)`` the sweep covers for this channel."""
     if settings.frequency_range is not None:
         return settings.frequency_range
-    return channel.f_start, channel.f_stop
+    return channel.f_start - settings.margin, channel.f_stop + settings.margin
 
 
 def configure(vna: ZNLE18, channel: Channel, settings: SParameterSettings) -> None:

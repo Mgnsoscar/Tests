@@ -35,15 +35,24 @@ from typing import Any, Iterable, Optional, Sequence
 import numpy as np
 
 from labkit.plotting import (
-    ColorName,
+    DEFAULT_THEME,
+    Annotation,
+    FigureTitle,
     GridMajor,
-    Legend,
+    HLine,
+    Layout,
     LinePlot,
     Marker,
     Panel,
+    Span,
+    Swatch,
+    Text,
+    Theme,
     Title,
+    VLine,
     XLabel,
     XLimits,
+    XTicks,
     YLabel,
     YLimits,
     plot,
@@ -66,11 +75,8 @@ __all__ = [
     "plot_reflection",
 ]
 
-_MAIN_COLOR: ColorName = "tab:red"
-_MAX_COLOR: ColorName = "tab:blue"
-_AVERAGE_COLOR: ColorName = "black"
-_BAND_COLOR: ColorName = "gray"
-_OTHER_COLORS: tuple[ColorName, ...] = ("tab:orange", "tab:green", "tab:purple", "brown", "pink", "cyan", "magenta")
+#: Line widths: the main and max gain configurations (and the average) stand out, the rest are thin.
+_BOLD, _THIN = 2.4, 1.4
 
 
 # --- helpers -------------------------------------------------------------------
@@ -79,17 +85,12 @@ def _hz(value: Quantity) -> float:
     return float(value.to("Hz").magnitude)
 
 
-def _mhz_axis(f_hz: Any) -> Quantity:
-    """Frequencies for the x axis, in MHz (a Hz axis gets a ``1e8`` exponent)."""
-    return Q(np.asarray(f_hz, dtype=np.float64) / 1e6, "MHz")
+def _mhz(value: Quantity) -> float:
+    return float(value.to("MHz").magnitude)
 
 
 def _db(values: Quantity) -> np.ndarray:
     return np.asarray(values.magnitude, dtype=np.float64)
-
-
-def _mhz(f_hz: float) -> str:
-    return f"{Q(f_hz, 'Hz').to('MHz'):~.4g}"
 
 
 def _verdict(ok: Optional[bool]) -> str:
@@ -413,35 +414,144 @@ def report(channel: Channel, results: Iterable[SParameterResult], dut: Optional[
 
 
 # --- plots --------------------------------------------------------------------------
+#
+# The layout: the plots on the left carry only the data and the reference
+# geometry (passband shaded, band edges and cutoff frequencies as hairlines,
+# the cutoff points as dots); every number and verdict lives in a text column
+# on the right, one row per configuration, so nothing has to be read off the
+# plot. The title line states the answers. Configuration i keeps the theme's
+# series colour i on every page.
 
-def _vertical(f_hz: float, lo: float, hi: float, style: Any, label: Optional[str] = None) -> LinePlot:
-    return LinePlot(_mhz_axis([f_hz, f_hz]), Q([lo, hi], "dB"), label=label, color=_BAND_COLOR, style=style, width=1.0)
+_COLUMN_LAYOUT = Layout(
+    width_ratios=[3.1, 1.35], left=0.065, right=0.985, top=0.86, bottom=0.075, hspace=0.32, wspace=0.05,
+)
 
 
-def _band_lines(channel: Channel, lo: float, hi: float) -> list[Any]:
-    """Dashed band edges, dotted cutoff frequencies."""
+def _short(label: str) -> str:
+    """``"attenuation 12 dB bypass on"`` → ``"att 12 dB, bypass on"`` for the column."""
+    return label.replace("attenuation ", "att ").replace(" bypass", ", bypass")
+
+
+def _palette(report_: ChannelReport, theme: Theme) -> dict[str, str]:
+    """``{configuration label: colour}`` — fixed per configuration across the pages."""
+    labels = [e.label for e in report_.gains]
+    for avg in report_.reflections.values():
+        labels += [label for label in avg.traces if label not in labels]
+    return {label: theme.series_color(i) for i, label in enumerate(labels)}
+
+
+def _emphasis(report_: ChannelReport, e: GainEvaluation) -> Optional[str]:
+    if e is report_.main and e is report_.max_gain:
+        return "main = max gain"
+    if e is report_.main:
+        return "main gain"
+    if e is report_.max_gain:
+        return "max gain"
+    return None
+
+
+def _band_geometry(ch: Channel, theme: Theme) -> list[Any]:
+    """The passband as a wash with hairline edges, and the cutoff frequencies dotted."""
     objects: list[Any] = [
-        _vertical(_hz(channel.f_start), lo, hi, "--", label=f"band {channel.f_start:~} to {channel.f_stop:~}"),
-        _vertical(_hz(channel.f_stop), lo, hi, "--"),
+        Span(ch.f_start.to("MHz"), ch.f_stop.to("MHz")),
+        VLine(ch.f_start.to("MHz"), color=theme.axis, width=0.8),
+        VLine(ch.f_stop.to("MHz"), color=theme.axis, width=0.8),
     ]
-    if channel.requirements is not None:
-        offset = _hz(channel.requirements.cutoff_offset)
+    if ch.requirements is not None:
+        y = ch.requirements.cutoff_offset
         objects += [
-            _vertical(_hz(channel.f_start) - offset, lo, hi, ":", label=f"cutoff ±{channel.requirements.cutoff_offset:~}"),
-            _vertical(_hz(channel.f_stop) + offset, lo, hi, ":"),
+            VLine((ch.f_start - y).to("MHz"), color=theme.axis, width=0.8, style=":"),
+            VLine((ch.f_stop + y).to("MHz"), color=theme.axis, width=0.8, style=":"),
         ]
     return objects
 
 
-def _role(report_: ChannelReport, e: GainEvaluation) -> tuple[str, Optional[ColorName], float, float]:
-    """``(prefix, color, width, alpha)`` — main and max stand out, the rest are thin."""
-    if e is report_.main and e is report_.max_gain:
-        return "main = max gain: ", _MAIN_COLOR, 2.5, 1.0
-    if e is report_.main:
-        return "main gain: ", _MAIN_COLOR, 2.5, 1.0
-    if e is report_.max_gain:
-        return "max gain: ", _MAX_COLOR, 2.5, 1.0
-    return "", None, 1.0, 0.7
+def _frequency_ticks(ch: Channel, sweep: tuple[float, float]) -> XTicks:
+    """Ticks at the cutoff frequencies (labelled so), the band edges, the centre and the quarter points."""
+    f0, f1, fc = _mhz(ch.f_start), _mhz(ch.f_stop), _mhz(ch.f_center)
+    positions = [f0, (f0 + fc) / 2, fc, (fc + f1) / 2, f1]
+    labels = [f"{v:g}" for v in positions]
+    if ch.requirements is not None:
+        y = _mhz(ch.requirements.cutoff_offset)
+        positions = [f0 - y, *positions, f1 + y]
+        labels = [f"{f0 - y:g}\ncutoff", *labels, f"{f1 + y:g}\ncutoff"]
+    lo, hi = sweep
+    keep = [(pos, lab) for pos, lab in zip(positions, labels) if lo - 1e-9 <= pos <= hi + 1e-9]
+    return XTicks([pos for pos, _ in keep], [lab for _, lab in keep])
+
+
+def _sweep(frequencies: Iterable[Quantity]) -> tuple[float, float]:
+    """The union of the results' sweeps, in MHz."""
+    los, his = [], []
+    for f in frequencies:
+        m = np.asarray(f.to("MHz").magnitude, dtype=np.float64)
+        los.append(float(m.min()))
+        his.append(float(m.max()))
+    return min(los), max(his)
+
+
+def _verdict_style(ok: Optional[bool], theme: Theme) -> tuple[str, str]:
+    if ok is None:
+        return "not checked", theme.muted
+    return ("✓ PASS", theme.good) if ok else ("✗ FAIL", theme.critical)
+
+
+def _gain_column(report_: ChannelReport, colors: dict[str, str], theme: Theme) -> list[Any]:
+    """The results column of the S21 page: one row per configuration, then the requirements."""
+    ch, r = report_.channel, report_.channel.requirements
+    objects: list[Any] = [Panel(0, 1, row_span=2, axes=False)]
+    y = 0.97
+    objects.append(Text("Configurations", 0.0, y, weight="bold", size=10.5))
+    y -= 0.05
+    columns = [("gain at\ncentre", 0.44), ("variation\nin band", 0.66), ("cutoff below\n/ above", 0.99)]
+    for header, x in columns:
+        objects.append(Text(header, x, y, color=theme.muted, size=8, h_align="right", line_spacing=1.1))
+    y -= 0.075
+    for e in report_.gains:
+        tag = _emphasis(report_, e)
+        width = _BOLD if tag else _THIN
+        objects.append(Swatch(0.0, y - 0.012, colors[e.label], width=width))
+        name = _short(e.label) + (f"  ({tag})" if tag else "")
+        objects.append(Text(name, 0.085, y, size=9, weight="bold" if tag else None))
+        y -= 0.042
+        objects.append(Text(f"{e.gain_nominal.magnitude:+.1f} dB", 0.44, y, color=theme.ink_secondary, size=9, h_align="right"))
+        objects.append(Text(f"±{e.variation.magnitude:.2f}", 0.66, y, color=theme.ink_secondary, size=9, h_align="right"))
+        if e.rejection_below is not None and e.rejection_above is not None:
+            cutoff = f"{e.rejection_below.magnitude:.1f} / {e.rejection_above.magnitude:.1f}"
+        else:
+            cutoff = "—" if r is None else "not in sweep"
+        objects.append(Text(cutoff, 0.99, y, color=theme.ink_secondary, size=9, h_align="right"))
+        if r is not None:
+            for ok, x in ((e.variation_ok, 0.66), (e.rejection_ok, 0.99)):
+                text, color = _verdict_style(ok, theme)
+                objects.append(Text(text, x, y - 0.037, color=color, size=7.5, weight="bold", h_align="right"))
+        y -= 0.105
+    y -= 0.01
+    objects.append(Text("Requirements", 0.0, y, weight="bold", size=10.5))
+    y -= 0.045
+    if r is None:
+        objects.append(Text("None defined for this channel.", 0.0, y, color=theme.ink_secondary, size=8.5))
+        y -= 0.05
+    else:
+        f0, f1 = _mhz(ch.f_start), _mhz(ch.f_stop)
+        yc = _mhz(r.cutoff_offset)
+        lines = [
+            f"Cutoff: S21 ≥ {r.cutoff_rejection:~} below the centre gain\n"
+            f"   at {r.cutoff_offset:~} outside the band ({f0 - yc:g} and {f1 + yc:g} MHz)",
+            f"Passband: within ±{r.passband_variation:~} of the centre gain\n   between {f0:g} and {f1:g} MHz",
+        ]
+        for line in lines:
+            objects.append(Text(line, 0.0, y, color=theme.ink_secondary, size=8.5, line_spacing=1.25))
+            y -= 0.085
+    objects.append(Text(
+        "Main gain: highest attenuation, bypass on\nMax gain: no attenuation, bypass off",
+        0.0, y, color=theme.ink_secondary, size=8.5, line_spacing=1.25,
+    ))
+    y -= 0.085
+    if r is not None:
+        text, color = _verdict_style(report_.passed, theme)
+        objects.append(Text(f"All configurations: {text}", 0.0, y - 0.01, color=color, size=10.5, weight="bold"))
+    return objects
 
 
 def plot_gain(
@@ -449,76 +559,104 @@ def plot_gain(
     show: bool = False,
     save_folder: Optional[str] = None,
     filename: Optional[str] = None,
+    theme: Theme = DEFAULT_THEME,
 ) -> Any:
-    """Two panels: S21 of every configuration with the cutoff points marked, and the
-    passband gain relative to each configuration's centre gain against the ±Z limit."""
-    ch = report_.channel
-    r = ch.requirements
-    others = iter(_OTHER_COLORS)
-    all_s21 = np.concatenate([_db(e.result.magnitudes["S21"]) for e in report_.gains])
-    lo, hi = float(np.nanmin(all_s21)) - 3.0, float(np.nanmax(all_s21)) + 3.0
+    """The S21 page: gain over the measured range, the passband variation against
+    its limit, and a results column with every configuration's numbers and verdicts."""
+    ch, r = report_.channel, report_.channel.requirements
+    colors = _palette(report_, theme)
+    f0, f1, fc = ch.f_start.to("MHz"), ch.f_stop.to("MHz"), ch.f_center.to("MHz")
+    sweep = _sweep(e.result.frequency for e in report_.gains)
+    room = 0.12 * (sweep[1] - sweep[0])   # space for the direct labels at the right end
 
-    top: list[Any] = [Panel(0, 0)]
-    bottom: list[Any] = [Panel(1, 0)]
+    main, max_gain = report_.main, report_.max_gain
+    subtitle = []
+    if main is not None:
+        subtitle.append(f"Main gain {main.gain_nominal.magnitude:.1f} dB")
+    if max_gain is not None:
+        subtitle.append(f"Max gain {max_gain.gain_nominal.magnitude:.1f} dB")
+    subtitle.append(f"band {_mhz(f0):g}–{_mhz(f1):g} MHz, centre {_mhz(fc):g} MHz")
+    subtitle.append("DUT plane, latest result per configuration")
+
+    # thin configurations first, the emphasised ones on top
+    ordered = sorted(report_.gains, key=lambda e: _emphasis(report_, e) is not None)
+
+    top: list[Any] = [Panel(0, 0), *_band_geometry(ch, theme)]
+    bottom: list[Any] = [Panel(1, 0), *_band_geometry(ch, theme)]
     largest_variation = 0.0
-    for e in report_.gains:
-        prefix, color, width, alpha = _role(report_, e)
-        color = color or next(others, None)
-        f = _mhz_axis(e.result.frequency.to("Hz").magnitude)
+    for e in ordered:
+        tag = _emphasis(report_, e)
+        color = colors[e.label]
+        width, alpha = (_BOLD, 1.0) if tag else (_THIN, 0.75)
+        f = e.result.frequency.to("MHz")
         s21 = e.result.magnitudes["S21"]
-        label = f"{prefix}{e.label}: {e.gain_nominal:~.2f} at {ch.f_center:~.6g}"
-        top.append(LinePlot(f, s21, label=label, color=color, width=width, alpha=alpha))
-        if r is not None and e.rejection_below is not None and e.rejection_above is not None and prefix:
-            offset = _hz(r.cutoff_offset)
-            below = float(e.gain_nominal.magnitude - e.rejection_below.magnitude)
-            above = float(e.gain_nominal.magnitude - e.rejection_above.magnitude)
-            top.append(Marker(_mhz_axis(_hz(ch.f_start) - offset), Q(below, "dB"), color=color, style="v", size=9.0))
-            top.append(
-                Marker(
-                    _mhz_axis(_hz(ch.f_stop) + offset), Q(above, "dB"), color=color, style="v", size=9.0,
-                    label=(
-                        f"{prefix.strip(': ')} cutoff: {e.rejection_below:~.1f} / {e.rejection_above:~.1f} "
-                        f"below centre (≥ {r.cutoff_rejection:~}: {_verdict(e.rejection_ok)})"
-                    ),
-                )
-            )
-        variation_label = f"{prefix}{e.label}: ±{e.variation:~.2f}"
-        if r is not None:
-            variation_label += f" (< {r.passband_variation:~}: {_verdict(e.variation_ok)})"
+        top.append(LinePlot(f, s21, color=color, width=width, alpha=alpha))
+        if tag:
+            top.append(Annotation(tag, f[-1], s21[-1], offset=(5, 0), size=9))
+        if e.rejection_below is not None and e.rejection_above is not None and r is not None:
+            yc = r.cutoff_offset
+            for x, rejection in ((ch.f_start - yc, e.rejection_below), (ch.f_stop + yc, e.rejection_above)):
+                level = Q(float(e.gain_nominal.magnitude - rejection.magnitude), "dB")
+                top.append(Marker(x.to("MHz"), level, color=color, size=6 if tag else 4.5,
+                                  edge_color=theme.surface, edge_width=1.2))
         largest_variation = max(largest_variation, float(e.variation.magnitude))
         deviation = Q(_db(s21) - float(e.gain_nominal.magnitude), "dB")
-        bottom.append(
-            LinePlot(
-                f, deviation, label=variation_label, color=color, width=width, alpha=alpha,
-                min_x=ch.f_start.to("MHz"), max_x=ch.f_stop.to("MHz"),
-            )
-        )
-    top += _band_lines(ch, lo, hi)
+        bottom.append(LinePlot(f, deviation, color=color, width=width, alpha=alpha, min_x=f0, max_x=f1))
+
+    # the cutoff requirement, drawn once for the main-gain configuration: a short limit dash
+    if r is not None and main is not None and main.rejection_above is not None:
+        yc, x_lim = r.cutoff_offset, r.cutoff_rejection
+        level = Q(float(main.gain_nominal.magnitude - x_lim.magnitude), "dB")
+        dash = Q(3, "MHz")
+        for x in (ch.f_start - yc, ch.f_stop + yc):
+            top.append(HLine(level, color=theme.ink_secondary, style="--", width=1.0,
+                             from_x=(x - dash).to("MHz"), to_x=(x + dash).to("MHz")))
+        anchor = (ch.f_stop + yc + dash).to("MHz")
+        # the note goes into the empty corner above the roll-off, right of the band
+        highest = max(e.gain_nominal.magnitude for e in report_.gains)
+        note_at = ((ch.f_stop + 0.6 * yc).to("MHz"), Q(float(highest) - 5.0, "dB"))
+        top.append(Annotation(
+            f"cutoff limit for the main gain:\n{x_lim:~} below its centre gain", anchor, level,
+            text_at=note_at, size=8.5, leader=True, leader_bend=0.25,
+        ))
     top += [
-        Title(f"{report_.title} — S21 at the DUT plane, {len(report_.gains)} configurations"),
-        XLabel("Frequency"),
+        _frequency_ticks(ch, sweep),
+        XLimits(Q(sweep[0] - 0.02 * (sweep[1] - sweep[0]), "MHz"), Q(sweep[1] + room, "MHz")),
+        Title("Gain over the measured range · passband shaded · dots = cutoff points",
+              align="left", size=10, color=theme.ink_secondary),
         YLabel("S21"),
-        GridMajor(),
-        Legend(location="best"),
+        GridMajor(axis="y"),
     ]
-    # y range: room for the ±Z limit lines and a legend below the curves
+
     span = 1.3 * largest_variation
     if r is not None:
         z = float(r.passband_variation.to("dB").magnitude)
-        span = max(span, 2.5 * z)
-        edges = _mhz_axis([_hz(ch.f_start), _hz(ch.f_stop)])
-        bottom.append(LinePlot(edges, Q([z, z], "dB"), label=f"limit ±{r.passband_variation:~}", color="red", style="--"))
-        bottom.append(LinePlot(edges, Q([-z, -z], "dB"), color="red", style="--"))
+        span = max(span, 1.5 * z)
+        bottom += [
+            HLine(Q(z, "dB"), color=theme.ink_secondary, style="--", width=1.0),
+            HLine(Q(-z, "dB"), color=theme.ink_secondary, style="--", width=1.0),
+            Annotation(f"limit ±{r.passband_variation:~}", f1, Q(z, "dB"), offset=(-4, 4),
+                       h_align="right", v_align="bottom", size=8.5),
+        ]
     bottom += [
-        Title("Passband gain relative to the gain at the band centre"),
-        XLabel("Frequency"),
-        YLabel("Gain − centre gain"),
-        XLimits(ch.f_start.to("MHz"), ch.f_stop.to("MHz")),
+        XLimits(f0 - Q(1, "MHz"), f1 + Q(1, "MHz")),
         YLimits(Q(-span, "dB"), Q(span, "dB")),
-        GridMajor(),
-        Legend(location="lower center"),
+        XTicks([_mhz(f0), (_mhz(f0) + _mhz(fc)) / 2, _mhz(fc), (_mhz(fc) + _mhz(f1)) / 2, _mhz(f1)]),
+        Title("Passband variation relative to the gain at the band centre",
+              align="left", size=10, color=theme.ink_secondary),
+        XLabel("Frequency"),
+        YLabel("gain − centre gain"),
+        GridMajor(axis="y"),
     ]
-    return plot(*top, *bottom, show=show, save_folder=save_folder, filename=filename)
+
+    layout = Layout(**{**_COLUMN_LAYOUT.__dict__, "height_ratios": [2.1, 1.0]})
+    return plot(
+        layout,
+        FigureTitle(f"{report_.title} — S21 (gain), {len(report_.gains)} configurations",
+                    subtitle="  ·  ".join(subtitle)),
+        *top, *bottom, *_gain_column(report_, colors, theme),
+        figsize=(12, 8.2), show=show, save_folder=save_folder, filename=filename, theme=theme,
+    )
 
 
 def plot_reflection(
@@ -527,35 +665,83 @@ def plot_reflection(
     show: bool = False,
     save_folder: Optional[str] = None,
     filename: Optional[str] = None,
+    theme: Theme = DEFAULT_THEME,
 ) -> Any:
-    """Every configuration's reflection as thin lines, their average bold on top, worst point marked."""
+    """The S11 (or S22) page: every configuration thin, the power average bold on top,
+    the worst in-band point of the average marked, and a column with each configuration's worst."""
     ch = report_.channel
     avg = report_.reflections[parameter]
-    others = iter(_OTHER_COLORS)
-    f = _mhz_axis(avg.frequency.to("Hz").magnitude)
-    objects: list[Any] = []
+    colors = _palette(report_, theme)
+    f = avg.frequency.to("MHz")
+    f_hz = np.asarray(avg.frequency.to("Hz").magnitude, dtype=np.float64)
+    in_band = _band_mask(f_hz, ch)
+    sweep = _sweep([avg.frequency])
+    room = 0.12 * (sweep[1] - sweep[0])
+    worst_label, worst_level, worst_f = avg.worst_individual
+
+    # y range: the data plus a margin, but never tighter than 10 dB — a flat
+    # match must read as flat, not as a noise band filling the panel
+    all_values = np.concatenate([_db(tr) for tr in avg.traces.values()])
+    lo, hi = float(np.nanmin(all_values)) - 1.0, float(np.nanmax(all_values)) + 1.0
+    if hi - lo < 10.0:
+        mid = (lo + hi) / 2
+        lo, hi = mid - 5.0, mid + 5.0
+    lo, hi = float(np.floor(lo)), float(np.ceil(hi))
+
+    objects: list[Any] = [Panel(0, 0), *_band_geometry(ch, theme)]
     for label, trace in avg.traces.items():
-        objects.append(LinePlot(f, trace, label=label, color=next(others, None), width=1.0, alpha=0.6))
-    all_values = np.concatenate([_db(t) for t in avg.traces.values()])
-    lo, hi = float(np.nanmin(all_values)) - 2.0, float(np.nanmax(all_values)) + 2.0
-    objects += _band_lines(ch, lo, hi)
-    objects.append(
-        LinePlot(
-            f, avg.average, color=_AVERAGE_COLOR, width=3.0,
-            label=f"average of {len(avg.traces)} configurations (power average)",
-        )
-    )
-    objects.append(
-        Marker(
-            avg.worst_frequency.to("MHz"), avg.worst_in_band, color=_AVERAGE_COLOR, style="D", size=8.0,
-            label=f"worst average in band: {avg.worst_in_band:~.1f} at {avg.worst_frequency.to('MHz'):~.4g}",
-        )
-    )
+        objects.append(LinePlot(f, trace, color=colors[label], width=1.2, alpha=0.6))
     objects += [
-        Title(f"{report_.title} — {parameter} at the DUT plane, all configurations and their average"),
+        YLimits(Q(lo, "dB"), Q(hi, "dB")),
+        LinePlot(f, avg.average, color=theme.ink, width=2.6),
+        Annotation("average", f[-1], avg.average[-1], offset=(6, 0), size=9, weight="bold", color=theme.ink),
+        Marker(avg.worst_frequency.to("MHz"), avg.worst_in_band, color=theme.ink, size=8,
+               edge_color=theme.surface, edge_width=1.5),
+        Annotation(
+            f"worst average in band\n{avg.worst_in_band.magnitude:.1f} dB at {_mhz(avg.worst_frequency):g} MHz",
+            avg.worst_frequency.to("MHz"), avg.worst_in_band, offset=(18, -46), size=9, color=theme.ink, leader=True,
+        ),
+        _frequency_ticks(ch, sweep),
+        XLimits(Q(sweep[0] - 0.02 * (sweep[1] - sweep[0]), "MHz"), Q(sweep[1] + room, "MHz")),
+        Title("Every configuration thin · the power average bold · passband shaded",
+              align="left", size=10, color=theme.ink_secondary),
         XLabel("Frequency"),
         YLabel(parameter),
-        GridMajor(),
-        Legend(location="best"),
+        GridMajor(axis="y"),
     ]
-    return plot(*objects, show=show, save_folder=save_folder, filename=filename)
+
+    column: list[Any] = [Panel(0, 1, axes=False)]
+    y = 0.97
+    column.append(Text("Configurations", 0.0, y, weight="bold", size=10.5))
+    y -= 0.05
+    column.append(Text(f"worst {parameter}\nin band", 0.95, y, color=theme.muted, size=8, h_align="right", line_spacing=1.1))
+    y -= 0.075
+    for label, trace in avg.traces.items():
+        worst = float(np.max(_db(trace)[in_band])) if in_band.any() else float(np.max(_db(trace)))
+        column.append(Swatch(0.0, y - 0.012, colors[label], width=_THIN, alpha=0.8))
+        column.append(Text(_short(label), 0.085, y, size=9))
+        column.append(Text(f"{worst:.1f} dB", 0.95, y, color=theme.ink_secondary, size=9, h_align="right"))
+        y -= 0.062
+    column.append(Swatch(0.0, y - 0.012, theme.ink, width=2.6))
+    column.append(Text("average (power average)", 0.085, y, size=9, weight="bold"))
+    column.append(Text(f"{avg.worst_in_band.magnitude:.1f} dB", 0.95, y, size=9, weight="bold", h_align="right"))
+    y -= 0.12
+    column.append(Text("How the average is taken", 0.0, y, weight="bold", size=10.5))
+    y -= 0.05
+    column.append(Text(
+        f"|{parameter}|² of every configuration averaged\nat each frequency, then back to dB —\n"
+        "the mean reflected power, not the\nmean of the dB values.",
+        0.0, y, color=theme.ink_secondary, size=8.5, line_spacing=1.3,
+    ))
+
+    subtitle = (
+        f"Average {parameter} in band: worst {avg.worst_in_band.magnitude:.1f} dB at {_mhz(avg.worst_frequency):g} MHz"
+        f"  ·  single worst configuration {worst_level.magnitude:.1f} dB ({worst_label})  ·  DUT plane"
+    )
+    layout = Layout(**{**_COLUMN_LAYOUT.__dict__, "top": 0.83, "bottom": 0.10})
+    return plot(
+        layout,
+        FigureTitle(f"{report_.title} — {parameter}, average over {len(avg.traces)} configurations", subtitle=subtitle),
+        *objects, *column,
+        figsize=(12, 6.2), show=show, save_folder=save_folder, filename=filename, theme=theme,
+    )
