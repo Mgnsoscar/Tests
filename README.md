@@ -19,6 +19,7 @@ rflab/
 scripts/
   run_<measurement>.py   edit the block at the top, then: measure -> save [-> analyse]
   analyze.py             load -> at_dut -> summarize -> plot, for saved results
+  report_channel.py      the per-channel requirements report from all S-parameter results
   characterize_component.py   measure a component on the VNA (fixture de-embedded) into components/data/
 tests/                pytest suite against the simulated bench
 results/              the data (not committed)
@@ -31,9 +32,9 @@ pip install -e ".[dev]"                          # pulls LabKit from GitHub
 ```
 
 Each run script has an **"Edit before running"** block at its top: the DUT
-module, the channels, the DUT's own attenuation setting (which you set on the
-device by hand, and the script records), and the measurement settings.
-Edit it, then run:
+module, the channels, the DUT's own attenuation and bypass settings (which
+you set on the device by hand, and the script records), and the measurement
+settings. Edit it, then run:
 
 ```bash
 python scripts/run_compression.py --plot
@@ -46,24 +47,55 @@ python scripts/analyze.py --all --measurement Compression    # post-process late
 python scripts/analyze.py "results/(B) Amplifier X v1.0/(B) Harmonics/2026-09-15 (B) Harmonics Ch1 attenuation 0 dB.csv" --show
 ```
 
-Add `--simulate` to any script to exercise it against the simulated bench.
+Add `--simulate` to any script to exercise it against the simulated bench
+(its data goes to `results-simulated/`, never into `results/`).
 
 Results land in
-`results/(B) <DUT> <version>/(B) <Measurement>/{date} (B) <Measurement> Ch<n> attenuation <x> dB.csv`,
+`results/(B) <DUT> <version>/(B) <Measurement>/{date} (B) <Measurement> Ch<n> attenuation <x> dB bypass <on|off>.csv`,
 with a header that records the DUT, channel, timestamp, reference plane, the
 signal path on every port (each component with its characterization date), the
 instruments' `*IDN?` strings, the DUT state and the settings. Figures are saved
 next to the data with the same name. A second run with the same name on the
 same day gets a `(2)` suffix rather than overwriting.
 
-The S11/S22 script sweeps a fixed 550–750 MHz range (401 points, 1 kHz IF
-bandwidth, 8 averages, −20 dBm) so one calibration serves every channel, and
-handles that calibration before measuring: it configures the sweep, then asks
-whether to **calibrate now** on the ZNLE's screen (and afterwards save the
-calibration to the instrument's cal pool under `CALIBRATION_NAME`), **load** a
-saved calibration, or **keep** the current correction. What was done, and the
-instrument's correction state and date, are recorded with every result.
-`--skip-calibration` skips the dialog.
+The S-parameter script measures S11, S21 and S22 over a fixed 550–750 MHz
+range (401 points, 1 kHz IF bandwidth, 8 averages, −20 dBm) so one
+calibration serves every channel, and handles that calibration before
+measuring: it configures the sweep, then asks whether to **calibrate now** on
+the ZNLE's screen (and afterwards save the calibration to the instrument's cal
+pool under `CALIBRATION_NAME`), **load** a saved calibration, or **keep** the
+current correction. What was done, and the instrument's correction state and
+date, are recorded with every result. `--skip-calibration` skips the dialog.
+
+## Channel requirements report
+
+Run `run_s_parameters.py` once per DUT configuration (each attenuation
+setting, bypass off and on), then
+
+```bash
+python scripts/report_channel.py            # every channel of the DUT in the edit block
+python scripts/report_channel.py --simulate # demo: measures 4 configurations on the simulated bench first
+```
+
+For each channel it takes the latest result of every configuration, moves
+them to the DUT plane, and answers the specification:
+
+- **S21** — the **main gain** (highest attenuation, bypass on) and the **max
+  gain** (no attenuation, bypass off), each read at the band centre; the
+  **filter cutoff** — S21 at least X dB below the centre gain Y MHz below
+  `f_start` and above `f_stop`; the **passband variation** — every in-band
+  point within Z dB of the centre gain. X, Y and Z are the channel's
+  `requirements` in its DUT definition (`ChannelRequirements`), and every
+  configuration is checked. The figure shows all configurations with main and
+  max gain bold, the band edges and cutoff frequencies, the cutoff points
+  marked with their rejection and verdict, and a second panel with the
+  passband gain relative to the centre gain against the ±Z limit.
+- **S11** (and S22) — every configuration as a thin trace and their
+  **average** (a power average of the dB values) bold on top, with the worst
+  in-band value of the average marked.
+
+The text report and the figures are saved next to the S-parameter data as
+`... report.txt`, `... report S21.png`, `... report S11.png`, `... report S22.png`.
 
 The compression measurement is built for trustworthy numbers: the MXG's step
 attenuator is held for the whole sweep (fixed at the smallest value that reaches
@@ -83,8 +115,8 @@ the noise floor.
 Raw data is saved **at the instrument connectors**. `rflab.analysis.at_dut`
 moves a result to the DUT ports using the paths recorded in it, evaluating each
 component's loss table (interpolated) at each row's own frequency — so a 3rd
-harmonic at 6.9 GHz is corrected with the loss at 6.9 GHz, and an S11 gets back
-twice the input-path loss. Noise figure is the exception: the K30 application
+harmonic at 1.8 GHz is corrected with the loss at 1.8 GHz, an S11 gets back
+twice the input-path loss, and an S21 the input plus the output path loss. Noise figure is the exception: the K30 application
 needs the losses to compute NF, so they are loaded onto the analyzer as
 frequency tables from the channel's paths before measuring, and that result is
 saved already at the DUT plane.
@@ -107,5 +139,6 @@ to the characterization that was current when they were measured.
 
 ## Adding a DUT
 
-Copy `rflab/duts/amplifier_x.py`, set the bands and the signal path on each
-port per channel, and run the scripts with `--dut <module name>`.
+Copy `rflab/duts/amplifier_x.py`, set the bands, the signal path on each
+port and the requirements per channel, and name the module in the scripts'
+edit blocks.

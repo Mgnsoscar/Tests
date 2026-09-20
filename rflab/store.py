@@ -29,7 +29,7 @@ from labkit.io.csv import Column, Value, read, write
 from labkit.units import is_quantity
 
 from . import components
-from .measurements._base import RESULT_TYPES, Result
+from .measurements._base import RESULT_TYPES, Result, format_state_value
 
 __all__ = ["ResultStore"]
 
@@ -38,6 +38,13 @@ _INSTRUMENT_PREFIX = "Instrument "
 _SETTING_PREFIX = "Setting "
 _STATE_PREFIX = "State "
 _COUNTER = re.compile(r"^(?P<base>.*?)(?: \((?P<n>\d+)\))?$")
+
+
+def _parse_state(value: Any) -> Any:
+    """A state header value: ``on``/``off`` back to a bool, anything else as read."""
+    if isinstance(value, str) and value.strip().lower() in ("on", "off"):
+        return value.strip().lower() == "on"
+    return value
 
 
 def _sort_key(path: Path) -> tuple[str, str, int]:
@@ -93,6 +100,12 @@ class ResultStore:
         folder.mkdir(parents=True, exist_ok=True)
         return str(folder), self._unique(folder, self.basename(result, suffix), ".png")
 
+    def companion_path(self, result: Result, suffix: str, extension: str) -> Path:
+        """A new, unique file next to `result`'s data: ``"{basename}{suffix}{extension}"``."""
+        folder = self.folder(result)
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder / (self._unique(folder, self.basename(result, suffix), extension) + extension)
+
     # -- save ----------------------------------------------------------------
     def save(self, result: Result) -> str:
         """Write `result` as a CSV and return its path."""
@@ -113,7 +126,10 @@ class ResultStore:
         for name, idn in result.instruments.items():
             values.append(Value(f"{_INSTRUMENT_PREFIX}{name}", idn, unit=None))
         for key, value in result.state.items():
-            values.append(Value(f"{_STATE_PREFIX}{key}", value, unit="" if is_quantity(value) else None))
+            if is_quantity(value):
+                values.append(Value(f"{_STATE_PREFIX}{key}", value, unit=""))
+            else:  # a switch is written as on/off, exactly as in the file name
+                values.append(Value(f"{_STATE_PREFIX}{key}", format_state_value(value), unit=None))
         for key, value in result.settings.items():
             values.append(Value(f"{_SETTING_PREFIX}{key}", value, unit="" if is_quantity(value) else None))
         columns = [Column(label, data) for label, data in result.columns().items()]
@@ -146,7 +162,7 @@ class ResultStore:
             if key.startswith(_SETTING_PREFIX)
         }
         state = {
-            key[len(_STATE_PREFIX):]: value
+            key[len(_STATE_PREFIX):]: _parse_state(value)
             for key, value in table.values.items()
             if key.startswith(_STATE_PREFIX)
         }

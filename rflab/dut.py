@@ -7,6 +7,17 @@ mixer, or whatever the device has. Measurements read the band from the channel
 and record the ports' paths in every result, so a result can later be moved to
 the DUT reference plane (see :func:`rflab.analysis.at_dut`).
 
+A channel may also carry its :class:`ChannelRequirements` — the filter
+cutoff and passband-flatness limits that :mod:`rflab.analysis.channel_report`
+checks the measured S21 against.
+
+The DUT's own switch settings during a test (its attenuation, whether the
+bypass is on) are not part of the definition — each run script states them
+and they travel with every result as its ``state``. The channel report
+understands the keys ``"attenuation"`` (a dB quantity) and ``"bypass"`` (a
+bool): *main gain* is the configuration with the highest attenuation and the
+bypass on, *max gain* the lowest attenuation with the bypass off.
+
 Concrete devices are defined in :mod:`rflab.duts`.
 """
 
@@ -18,9 +29,44 @@ from typing import Mapping, Optional
 import numpy as np
 
 from labkit.signal_path import SignalPath
-from labkit.units import Quantity, ensure_frequency, quantity
+from labkit.units import Quantity, ensure_frequency, is_dimensionless_decibel, quantity
 
-__all__ = ["Channel", "DUT"]
+__all__ = ["Channel", "ChannelRequirements", "DUT"]
+
+
+@dataclass(frozen=True)
+class ChannelRequirements:
+    """What a channel's S21 has to satisfy, in the words of the specification.
+
+    Parameters
+    ----------
+    cutoff_rejection:
+        X — the gain must be at least X dB below the nominal (band-centre)
+        gain at `cutoff_offset` outside each band edge.
+    cutoff_offset:
+        Y — how far outside the band edges (``f_start - Y`` and
+        ``f_stop + Y``) the cutoff is checked.
+    passband_variation:
+        Z — inside the band the gain must stay within Z dB of the nominal
+        gain at the band centre.
+    """
+
+    cutoff_rejection: Quantity
+    cutoff_offset: Quantity
+    passband_variation: Quantity
+
+    def __post_init__(self) -> None:
+        ensure_frequency(self.cutoff_offset)
+        for name in ("cutoff_rejection", "passband_variation"):
+            value = getattr(self, name)
+            if not is_dimensionless_decibel(value):
+                raise ValueError(f"ChannelRequirements.{name} must be a dB quantity, got {value!r}.")
+
+    def describe(self) -> str:
+        return (
+            f"cutoff ≥ {self.cutoff_rejection:~} at {self.cutoff_offset:~} outside the band, "
+            f"passband within ±{self.passband_variation:~} of the centre gain"
+        )
 
 
 @dataclass(frozen=True)
@@ -39,6 +85,8 @@ class Channel:
         treated as a direct (lossless) connection.
     f_lo:
         The LO frequency, for a mixer channel.
+    requirements:
+        The S21 requirements the channel report checks (optional).
     """
 
     number: int
@@ -46,6 +94,7 @@ class Channel:
     f_stop: Quantity
     ports: Mapping[str, SignalPath] = field(default_factory=dict)
     f_lo: Optional[Quantity] = None
+    requirements: Optional[ChannelRequirements] = None
 
     def __post_init__(self) -> None:
         ensure_frequency(self.f_start)

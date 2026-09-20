@@ -4,14 +4,16 @@ Everything here works on a :class:`~rflab.measurements.Result` — fresh from a
 measurement or loaded from disk with :class:`rflab.store.ResultStore` — and
 never touches an instrument. Start with :func:`at_dut`, which moves a raw result
 to the DUT ports using the recorded signal paths; each measurement's module
-then summarizes and plots the DUT-plane data.
+then summarizes and plots the DUT-plane data. :mod:`channel_report` goes across
+results: it checks a channel's S-parameter results of every configuration
+against the channel's requirements.
 """
 
 from __future__ import annotations
 
 from typing import Any, Callable
 
-from . import compression, harmonics, intermodulation, noise_figure, s_parameters
+from . import channel_report, compression, harmonics, intermodulation, noise_figure, s_parameters
 from .reference_plane import at_dut
 
 __all__ = [
@@ -21,6 +23,7 @@ __all__ = [
     "s_parameters",
     "harmonics",
     "intermodulation",
+    "channel_report",
     "SUMMARIZERS",
     "PLOTTERS",
 ]

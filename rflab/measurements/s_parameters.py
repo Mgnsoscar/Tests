@@ -1,4 +1,4 @@
-"""Reflection (S11, S22) on the vector network analyzer.
+"""S-parameters (S11, S21, S22) on the vector network analyzer.
 
 The sweep is configured with :func:`configure` — the frequency range (a fixed
 range covering every channel, or the channel's own band), points, IF
@@ -9,8 +9,15 @@ requested S-parameter on channel 1 of the VNA, sweeps once (averaged), and
 stores the complex data as magnitude (dB) and phase (degrees) per frequency,
 **raw** at the VNA ports, together with the correction state and the
 calibration description. With a path on a port,
-:func:`rflab.analysis.at_dut` adds twice the path loss to the reflection
-magnitude (the wave passes the path going in and coming back).
+:func:`rflab.analysis.at_dut` adds twice the path loss to a reflection
+magnitude (the wave passes the path going in and coming back) and the input
+plus the output path loss to a transmission magnitude (S21 is the gain).
+
+One result holds one DUT configuration (its ``state``: attenuation and
+bypass). Measure every configuration of interest, then
+:mod:`rflab.analysis.channel_report` compares them: main and max gain, the
+filter cutoff, the passband variation, and the S11 averaged over all
+configurations.
 
 Defaults are chosen for channels in the 550–750 MHz region: a 401-point sweep
 over that range (0.5 MHz per point), 1 kHz IF bandwidth, 8 sweeps averaged,
@@ -50,7 +57,8 @@ class SParameterSettings:
     power: Quantity = Q(-20, "dBm")
     #: Sweeps averaged (1 = none).
     average_count: int = 8
-    parameters: tuple[str, ...] = ("S11", "S22")
+    #: S21 is the gain the channel report checks; S11 and S22 the matches.
+    parameters: tuple[str, ...] = ("S11", "S21", "S22")
 
 
 def sweep_range(channel: Channel, settings: SParameterSettings) -> tuple[Quantity, Quantity]:

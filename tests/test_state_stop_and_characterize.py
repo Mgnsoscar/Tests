@@ -121,6 +121,7 @@ def test_characterize_de_embeds_fixture_and_saves_a_loadable_table(tmp_path: Pat
         Component("adapter B", LossTable(Q([0.1, 20.0], "GHz"), Q([0.1, 0.3], "dB")), date(2026, 8, 20)),
     )
     settings = CharacterizationSettings(start=Q(1, "GHz"), stop=Q(3, "GHz"), points=3)
+    bench = SimulatedBench(AmplifierModel(gain_db=-30.0))   # a "DUT" with 30 dB loss: S21 = -30 dB
     result = characterize(bench.vna, "Test cable", settings, fixture, when=date(2026, 9, 15))
 
     np.testing.assert_allclose(result.frequency.to("GHz").magnitude, [1.0, 2.0, 3.0])
@@ -141,7 +142,8 @@ def test_characterize_de_embeds_fixture_and_saves_a_loadable_table(tmp_path: Pat
     assert table.loss_at(Q(2.5, "GHz")).magnitude == pytest.approx((expected[1] + expected[2]) / 2)
 
 
-def test_characterize_without_fixture_keeps_raw(bench: SimulatedBench) -> None:
+def test_characterize_without_fixture_keeps_raw() -> None:
+    bench = SimulatedBench(AmplifierModel(gain_db=-30.0))
     result = characterize(bench.vna, "Bare", CharacterizationSettings(points=2), when=date(2026, 9, 15))
     np.testing.assert_allclose(result.loss.magnitude, result.loss_raw.magnitude)
     assert result.fixture.describe() == "direct"

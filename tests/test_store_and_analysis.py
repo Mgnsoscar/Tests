@@ -126,13 +126,15 @@ def test_at_dut_applies_path_losses_at_each_rows_frequency(bench: SimulatedBench
     assert at_dut(corrected) is corrected  # idempotent
 
     harm = harmonics.measure(bench, dut, ch, HarmonicsSettings(harmonics=3, settle=NO_SETTLE))
-    # the 3rd harmonic of 2.3 GHz is 6.9 GHz: loss interpolated there, not at f0
-    loss_3rd = ch.path("out").loss_at(Q(6.9, "GHz")).magnitude
+    # the 3rd harmonic of 600 MHz is 1.8 GHz: loss interpolated there, not at f0
+    loss_3rd = ch.path("out").loss_at(Q(1.8, "GHz")).magnitude
     assert at_dut(harm).level.magnitude[2] == pytest.approx(harm.level.magnitude[2] + loss_3rd)
 
     refl = s_parameters.measure(bench, dut, ch, SParameterSettings(points=3))
     twice = 2 * ch.path("in").loss_at(refl.frequency).magnitude
     np.testing.assert_allclose(at_dut(refl).magnitudes["S11"].magnitude, refl.magnitudes["S11"].magnitude + twice)
+    both = (ch.path("in").loss_at(refl.frequency) + ch.path("out").loss_at(refl.frequency)).magnitude
+    np.testing.assert_allclose(at_dut(refl).magnitudes["S21"].magnitude, refl.magnitudes["S21"].magnitude + both)
 
     nf = noise_figure.measure(bench, dut, ch, NoiseFigureSettings(points=3))
     assert at_dut(nf) is nf  # already at the DUT plane

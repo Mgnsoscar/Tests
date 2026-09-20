@@ -15,6 +15,7 @@ from rflab.measurements.intermodulation import IntermodulationSettings, measure
 DUT = "amplifier_x"                 # module in rflab/duts/
 CHANNELS = [1]                      # channel numbers, or None for all channels
 DUT_ATTENUATION = Q(0, "dB")        # the DUT's own attenuation setting (set it by hand)
+DUT_BYPASS = False                  # the DUT's bypass switch (set it by hand)
 SETTINGS = IntermodulationSettings(
     level=Q(-10, "dBm"),            # level of each tone at the generators
     tone_spacing=Q(1, "MHz"),
@@ -25,5 +26,5 @@ SETTINGS = IntermodulationSettings(
 if __name__ == "__main__":
     run(
         __doc__, measure,
-        dut=DUT, channels=CHANNELS, settings=SETTINGS, state={"attenuation": DUT_ATTENUATION},
+        dut=DUT, channels=CHANNELS, settings=SETTINGS, state={"attenuation": DUT_ATTENUATION, "bypass": DUT_BYPASS},
     )

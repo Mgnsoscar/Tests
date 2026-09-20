@@ -39,9 +39,8 @@ def test_dut_lookup() -> None:
 
 def test_channel_ports_differ_per_channel() -> None:
     dut: DUT = load("amplifier_x")
-    f = Q(2.3, "GHz")
-    ch1_in = dut.channel(1).path("in").loss_at(f)
-    ch2_in = dut.channel(2).path("in").loss_at(Q(3.5, "GHz"))
+    ch1_in = dut.channel(1).path("in").loss_at(dut.channel(1).f_center)
+    ch2_in = dut.channel(2).path("in").loss_at(dut.channel(2).f_center)
     assert ch1_in > ch2_in  # channel 1 has the pad in its input path
 
 

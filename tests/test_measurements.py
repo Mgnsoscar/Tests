@@ -39,13 +39,13 @@ def test_compression_sweeps_levels_and_records_context(bench: SimulatedBench, du
     np.testing.assert_allclose(result.p_in.magnitude, [-30.0, -20.0, -10.0])
     expected = [model.output_level(p) for p in (-30.0, -20.0, -10.0)]
     np.testing.assert_allclose(result.p_out.magnitude, expected)
-    np.testing.assert_allclose(result.frequency.to("GHz").magnitude, [2.3, 2.3, 2.3])
+    np.testing.assert_allclose(result.frequency.to("MHz").magnitude, [600, 600, 600])
 
     np.testing.assert_allclose(result.noise_floor.magnitude, [model.noise_floor_dbm] * 3)
     assert result.settings["generator_attenuation"] == Q(15, "dB")  # -30 dBm start needs 15 dB held
 
     w = bench.fsv_backend.writes
-    assert "FREQ:CENT 2300000000.0" in w and "INIT:CONT OFF" in w and "CALC:MARK1:MAX" in w
+    assert "FREQ:CENT 600000000.0" in w and "INIT:CONT OFF" in w and "CALC:MARK1:MAX" in w
     assert "DET1 RMS" in w and "DISP:TRAC1:MODE AVER" in w and "SWE:COUN 5" in w
     assert any(c.startswith("DISP:TRAC:Y:SCAL:RLEV ") for c in w)  # reference level tracked
 
@@ -65,28 +65,30 @@ def test_noise_figure_loads_path_losses_on_the_instrument(bench: SimulatedBench,
     assert "INST:CRE NOISe,'Noise'" in w
     assert "CORR:LOSS:INP:TABL:SEL 'LabKit in'" in w and "CORR:LOSS:INP:MODE TABL" in w
     assert "CORR:LOSS:OUTP:TABL:SEL 'LabKit out'" in w
-    table = next(c for c in w if c.startswith("CORR:LOSS:INP:TABL 2"))
-    # 3 points over 2.2-2.4 GHz: cable (interpolated) + 10.2 dB pad at each
+    table = next(c for c in w if c.startswith("CORR:LOSS:INP:TABL 5"))
+    # 3 points over 580-620 MHz: cable (interpolated) + 10.2 dB pad at each
     pairs = [float(x) for x in table.split(" ", 1)[1].split(",")]
-    assert pairs[0] == 2.2e9 and pairs[4] == 2.4e9
-    assert pairs[1] == pytest.approx(0.63 + 10.2, abs=1e-6)  # 2.2 GHz: 0.60 + 0.15*0.2
+    assert pairs[0] == 580e6 and pairs[4] == 620e6
+    assert pairs[1] == pytest.approx(0.3008 + 10.2, abs=1e-6)  # 580 MHz: 0.28 + 0.13*0.16
 
 
-def test_s_parameters_reads_both_reflections(bench: SimulatedBench, dut: DUT, model: AmplifierModel) -> None:
+def test_s_parameters_reads_reflections_and_gain(bench: SimulatedBench, dut: DUT, model: AmplifierModel) -> None:
     result = s_parameters.measure(bench, dut, dut.channel(1), SParameterSettings(points=5, average_count=4))
-    assert result.parameters == ("S11", "S22")
+    assert result.parameters == ("S11", "S21", "S22")
     assert result.frequency.shape == (5,)
     np.testing.assert_allclose(result.magnitudes["S11"].magnitude, [model.s11_db] * 5, atol=1e-9)
+    np.testing.assert_allclose(result.magnitudes["S21"].magnitude, [model.gain_db] * 5, atol=1e-9)
     np.testing.assert_allclose(result.magnitudes["S22"].magnitude, [model.s22_db] * 5, atol=1e-9)
     w = bench.vna_backend.writes
-    assert "CALC1:PAR:SDEF 'Trc1','S11'" in w and "CALC1:PAR:SDEF 'Trc2','S22'" in w
+    assert "CALC1:PAR:SDEF 'Trc1','S11'" in w and "CALC1:PAR:SDEF 'Trc2','S21'" in w
+    assert "CALC1:PAR:SDEF 'Trc3','S22'" in w
     assert w[-1] == "OUTP OFF"
 
 
 def test_harmonics_one_row_per_order(bench: SimulatedBench, dut: DUT, model: AmplifierModel) -> None:
     result = harmonics.measure(bench, dut, dut.channel(2), HarmonicsSettings(harmonics=3, settle=NO_SETTLE))
     np.testing.assert_array_equal(result.order, [1, 2, 3])
-    np.testing.assert_allclose(result.frequency.to("GHz").magnitude, [3.5, 7.0, 10.5])
+    np.testing.assert_allclose(result.frequency.to("MHz").magnitude, [700, 1400, 2100])
     p1 = model.output_level(-10.0)
     np.testing.assert_allclose(result.level.magnitude, [p1, p1 - 25.0, p1 - 50.0])
     assert "CALC:MARK:FUNC:HARM:NHAR 3" in bench.fsv_backend.writes
@@ -97,7 +99,7 @@ def test_intermodulation_reads_tones_and_products(bench: SimulatedBench, dut: DU
     settings = IntermodulationSettings(level=Q(-20, "dBm"), tone_spacing=Q(2, "MHz"), settle=NO_SETTLE)
     result = intermodulation.measure(bench, dut, dut.channel(1), settings)
     assert list(result.tone) == ["f1", "f2", "im3_low", "im3_high"]
-    np.testing.assert_allclose(result.frequency.to("MHz").magnitude, [2299.0, 2301.0, 2297.0, 2303.0])
+    np.testing.assert_allclose(result.frequency.to("MHz").magnitude, [599.0, 601.0, 597.0, 603.0])
     p_out = model.output_level(-20.0)
     np.testing.assert_allclose(result.level.magnitude, [p_out, p_out, model.im3_level(p_out), model.im3_level(p_out)])
     np.testing.assert_allclose(result.toi_instrument.magnitude, [model.oip3_dbm] * 4)

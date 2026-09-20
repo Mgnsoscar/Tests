@@ -15,18 +15,35 @@ the instruments were connected straight to the DUT. That makes the simulated
 raw data "instrument-plane" numbers with zero path loss, which is fine for
 exercising the code but means ``at_dut`` will *add* the configured path
 losses to it — expected, and visible in the tests.
+
+With a `passband` the model becomes a filtered amplifier: the gain is flat
+(with a little ripple) inside the band and rolls off outside it like a
+Butterworth band-pass, which is what the channel report's cutoff and
+passband-variation checks need to see. The DUT's switch settings —
+`attenuation_db` and `bypass` — reduce the gain the way the real device's
+would; :meth:`SimulatedBench.set_dut` copies them from a channel and a run
+script's ``state`` so a ``--simulate`` run behaves like the configured DUT.
+``set_dut`` also connects the channel's signal paths: from then on the
+simulated instruments see the DUT *through* those paths (tones arrive at the
+DUT minus the input loss, output levels and S-parameters reach the analyzer
+minus the output loss), so the raw data really is instrument-plane data and
+``at_dut`` recovers the model's values.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Mapping, Optional
 
 import numpy as np
 
 from labkit.instruments import FSV3007, N5183A, TGR6000, ZNLE18
 from labkit.instruments.mock import MockBackend, mock_instrument
+from labkit.signal_path import SignalPath
+from labkit.units import quantity
+
+from .dut import Channel
 
 __all__ = ["AmplifierModel", "SimulatedBench", "simulated_bench"]
 
@@ -46,9 +63,54 @@ class AmplifierModel:
     s22_db: float = -12.0
     noise_floor_dbm: float = -100.0
 
-    def output_level(self, p_in_dbm: float) -> float:
+    # -- the filtered amplifier (only with a passband) ------------------------
+    #: ``(f_start_hz, f_stop_hz)`` of the passband; ``None`` = flat gain at every frequency.
+    passband_hz: Optional[tuple[float, float]] = None
+    #: Order of the Butterworth-like band-pass roll-off outside the band.
+    filter_order: int = 6
+    #: How far outside each band edge the response is 3 dB down.
+    edge_margin_hz: float = 5e6
+    #: Peak-to-peak gain ripple inside the band.
+    ripple_db: float = 0.4
+
+    # -- the DUT's switch settings (set by hand on the real device) ----------
+    #: The DUT's own attenuator setting; it takes this much off the gain.
+    attenuation_db: float = 0.0
+    #: Bypass on: the `bypass_stage_gain_db` stage is switched out of the chain.
+    bypass: bool = False
+    bypass_stage_gain_db: float = 10.0
+
+    # -- gain -----------------------------------------------------------------
+    def _relative(self, f_hz: float) -> float:
+        """Signed distance from the band centre in units of the 3 dB half-width (0 inside)."""
+        assert self.passband_hz is not None
+        f_start, f_stop = self.passband_hz
+        centre = (f_start + f_stop) / 2
+        half = (f_stop - f_start) / 2 + self.edge_margin_hz
+        return (f_hz - centre) / half
+
+    def s21_db(self, f_hz: float) -> float:
+        """The small-signal gain at `f_hz` in the current configuration (state and filter)."""
+        gain = self.gain_db - self.attenuation_db - (self.bypass_stage_gain_db if self.bypass else 0.0)
+        if self.passband_hz is None:
+            return gain
+        x = self._relative(f_hz)
+        rolloff = -10 * np.log10(1 + x ** (2 * self.filter_order))
+        ripple = -(self.ripple_db / 2) * (1 - np.cos(2 * np.pi * 1.5 * x))  # 0 at the centre, dips in between
+        return float(gain + rolloff + ripple)
+
+    def s11_db_at(self, f_hz: float) -> float:
+        """S11 in the current configuration: a slightly worse match with the bypass on and a
+        gentle slope across the band (flat `s11_db` without a passband)."""
+        value = self.s11_db + (2.0 if self.bypass else 0.0) - 0.1 * self.attenuation_db
+        if self.passband_hz is not None:
+            value += 1.5 * self._relative(f_hz)
+        return float(value)
+
+    def output_level(self, p_in_dbm: float, f_hz: Optional[float] = None) -> float:
         """Soft-limited output level: linear gain that rolls into `p_sat_dbm`."""
-        linear_out = p_in_dbm + self.gain_db
+        gain = self.gain_db if f_hz is None else self.s21_db(f_hz)
+        linear_out = p_in_dbm + gain
         return float(self.p_sat_dbm - 10 * np.log10(1 + 10 ** ((self.p_sat_dbm - linear_out) / 10)))
 
     def im3_level(self, p_tone_out_dbm: float) -> float:
@@ -91,6 +153,8 @@ class SimulatedBench:
 
     def __init__(self, model: Optional[AmplifierModel] = None) -> None:
         self.model = model or AmplifierModel()
+        #: The signal paths between the instruments and the DUT ports (none until ``set_dut``).
+        self.paths: dict[str, SignalPath] = {}
         self.gen_a, self.gen_a_backend = mock_instrument(
             N5183A, name="Signal generator A", responses={"*IDN?": "Agilent Technologies, N5183A, SIM, 1.0"}
         )
@@ -99,6 +163,25 @@ class SimulatedBench:
         )
         self.fsv, self.fsv_backend = mock_instrument(FSV3007, name="Spectrum analyzer", responses=self._fsv)
         self.vna, self.vna_backend = mock_instrument(ZNLE18, name="Network analyzer", responses=self._vna)
+
+    def set_dut(self, channel: Channel, state: Optional[Mapping[str, Any]] = None) -> None:
+        """Put the modelled DUT into `channel`'s band and the run script's `state`.
+
+        The real DUT is set by hand; this is the simulated equivalent. The
+        passband is the channel's band, ``state["attenuation"]`` (a dB
+        quantity) and ``state["bypass"]`` (a bool) set the switches, and the
+        channel's signal paths are "connected" between the instruments and
+        the DUT.
+        """
+        self.paths = dict(channel.ports)
+        self.model.passband_hz = (
+            float(channel.f_start.to("Hz").magnitude),
+            float(channel.f_stop.to("Hz").magnitude),
+        )
+        state = state or {}
+        attenuation = state.get("attenuation")
+        self.model.attenuation_db = float(attenuation.to("dB").magnitude) if attenuation is not None else 0.0
+        self.model.bypass = bool(state.get("bypass", False))
 
     # -- generator state (from what the drivers wrote) -----------------------
     def _tone_a(self) -> tuple[float, float, bool]:
@@ -119,19 +202,31 @@ class SimulatedBench:
         """``[(frequency_hz, input_level_dbm)]`` of the tones currently on."""
         return [(f, p) for f, p, on in (self._tone_a(), self._tone_b()) if on]
 
+    # -- the paths between instruments and DUT --------------------------------
+    def _loss(self, port: str, f_hz: float) -> float:
+        """The connected path's loss on `port` at `f_hz` in dB (0 with no path)."""
+        path = self.paths.get(port)
+        if path is None or len(path) == 0:
+            return 0.0
+        return float(path.loss_at(quantity(f_hz, "Hz"), extrapolate=True).magnitude)
+
+    def _tones_at_dut(self) -> list[tuple[float, float]]:
+        """The tones as they arrive at the DUT input: generator level minus the input path."""
+        return [(f, p - self._loss("in", f)) for f, p in self._tones()]
+
     # -- spectrum analyzer ---------------------------------------------------
     def _spectrum_level(self, f_hz: float, tolerance_hz: float = 1e3) -> float:
-        """The output level at `f_hz`: a tone, an IM3 product, or the noise floor."""
-        tones = self._tones()
+        """The level at the analyzer at `f_hz`: a tone, an IM3 product, or the noise floor."""
+        tones = self._tones_at_dut()
         for f, p in tones:
             if abs(f - f_hz) <= tolerance_hz:
-                return self.model.output_level(p)
+                return self.model.output_level(p, f) - self._loss("out", f)
         if len(tones) == 2:
             (f1, p1), (f2, p2) = tones
-            p_out = self.model.output_level(min(p1, p2))
+            p_out = self.model.output_level(min(p1, p2), (f1 + f2) / 2)
             for f_im3 in (2 * f1 - f2, 2 * f2 - f1):
                 if abs(f_im3 - f_hz) <= tolerance_hz:
-                    return self.model.im3_level(p_out)
+                    return self.model.im3_level(p_out) - self._loss("out", f_im3)
         return self.model.noise_floor_dbm
 
     def _fsv(self, query: str) -> str:
@@ -153,17 +248,26 @@ class SimulatedBench:
             return _num(self._spectrum_level(f))
         if query == "CALC:MARK:FUNC:HARM:LIST?":
             n = int(_last_float(w, r"^CALC:MARK:FUNC:HARM:NHAR (\d+)$", 1))
-            tones = self._tones()
-            p_out = self.model.output_level(tones[0][1]) if tones else self.model.noise_floor_dbm
-            levels = [p_out + self.model.harmonic_dbc * (k - 1) if tones else p_out for k in range(1, n + 1)]
+            tones = self._tones_at_dut()
+            if not tones:
+                return ",".join([_num(self.model.noise_floor_dbm)] * n)
+            f0, p_in = tones[0]
+            p_out = self.model.output_level(p_in, f0)
+            levels = [p_out + self.model.harmonic_dbc * (k - 1) - self._loss("out", k * f0) for k in range(1, n + 1)]
             return ",".join(_num(v) for v in levels)
         if query == "CALC:MARK:FUNC:TOI:RES?":
-            return _num(self.model.oip3_dbm)
+            tones = self._tones()
+            f = tones[0][0] if tones else 1e9
+            return _num(self.model.oip3_dbm - self._loss("out", f))
         if query.startswith("TRAC1:DATA? TRACE1,"):
             points = int(_last_float(w, r"^FREQ:POIN (\d+)$", 1))
             kind = query.rsplit(",", 1)[1]
-            value = self.model.noise_figure_db if kind == "NOIS" else self.model.gain_db
-            return ",".join([_num(value)] * points)
+            if kind == "NOIS":
+                return ",".join([_num(self.model.noise_figure_db)] * points)
+            start = _last_float(w, r"^FREQ:STAR (\S+)$", 1e9)
+            stop = _last_float(w, r"^FREQ:STOP (\S+)$", start)
+            grid = np.linspace(start, stop, points) if points > 1 else np.array([(start + stop) / 2])
+            return ",".join(_num(self.model.s21_db(f)) for f in grid)
         return ""
 
     # -- network analyzer ----------------------------------------------------
@@ -188,9 +292,16 @@ class SimulatedBench:
         if query.endswith("DATA? SDAT"):
             selected = _last(w, r"^CALC1:PAR:SEL '(\w+)'$") or "Trc1"
             parameter = _last(w, rf"^CALC1:PAR:SDEF '{selected}','(S\d\d)'$") or "S11"
-            db = {"S11": self.model.s11_db, "S22": self.model.s22_db}.get(parameter, -30.0)
-            magnitude = _num(10 ** (db / 20))
-            return ",".join(f"{magnitude},0.0" for _ in range(points))
+            grid = np.linspace(start, stop, points)
+            if parameter == "S11":
+                db = [self.model.s11_db_at(f) - 2 * self._loss("in", f) for f in grid]
+            elif parameter == "S22":
+                db = [self.model.s22_db - 2 * self._loss("out", f) for f in grid]
+            elif parameter in ("S21", "S12"):
+                db = [self.model.s21_db(f) - self._loss("in", f) - self._loss("out", f) for f in grid]
+            else:
+                db = [-30.0] * points
+            return ",".join(f"{_num(10 ** (v / 20))},0.0" for v in db)
         return ""
 
 

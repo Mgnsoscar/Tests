@@ -31,6 +31,7 @@ __all__ = [
     "settings_dict",
     "settle",
     "result_metadata",
+    "format_state_value",
 ]
 
 _R = TypeVar("_R", bound="Result")
@@ -102,10 +103,16 @@ class Result:
         return " ".join(parts)
 
 
-def _format_state(value: Any) -> str:
+def format_state_value(value: Any) -> str:
+    """One state value for names and headers: ``6 dB``, ``on``/``off`` for a switch."""
     if is_quantity(value):
         return f"{value:~g}"
+    if isinstance(value, bool):
+        return "on" if value else "off"
     return str(value)
+
+
+_format_state = format_state_value
 
 
 def result_metadata(result: Result) -> dict[str, Any]:

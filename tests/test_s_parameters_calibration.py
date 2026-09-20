@@ -40,7 +40,7 @@ def test_configure_sets_the_fixed_range_before_any_calibration(bench: SimulatedB
 def test_channel_band_is_used_when_no_fixed_range(bench: SimulatedBench, dut: DUT) -> None:
     settings = SParameterSettings(frequency_range=None, points=11)
     start, stop = s_parameters.sweep_range(dut.channel(1), settings)
-    assert start == Q(2.2, "GHz") and stop == Q(2.4, "GHz")
+    assert start == Q(580, "MHz") and stop == Q(620, "MHz")
 
 
 # --- calibration dialog ---------------------------------------------------------
@@ -109,7 +109,7 @@ def test_measure_after_dialog_records_correction_and_band(bench: SimulatedBench,
     assert result.settings["correction"] == "on"
     assert result.settings["correction_date"] == "2026-09-15 10:02:11"
     assert result.settings["frequency_range"] == "550 MHz to 750 MHz"
-    assert result.band == (Q(2.2, "GHz"), Q(2.4, "GHz"))
+    assert result.band == (Q(580, "MHz"), Q(620, "MHz"))
     np.testing.assert_allclose(result.frequency.to("MHz").magnitude, [550, 600, 650, 700, 750])
     np.testing.assert_allclose(result.magnitudes["S11"].magnitude, [model.s11_db] * 5, atol=1e-9)
     # the second configure was skipped: only one FREQ:STAR write in total
@@ -118,15 +118,15 @@ def test_measure_after_dialog_records_correction_and_band(bench: SimulatedBench,
 
 def test_worst_case_is_limited_to_the_channel_band(bench: SimulatedBench, dut: DUT, model: AmplifierModel) -> None:
     ch = dut.channel(2)
-    settings = SParameterSettings(frequency_range=(Q(3, "GHz"), Q(4, "GHz")), points=11)
+    settings = SParameterSettings(frequency_range=(Q(650, "MHz"), Q(750, "MHz")), points=11)
     result = s_parameters.measure(bench, dut, ch, settings)
     # make the out-of-band points terrible: worst_case must ignore them
-    f = result.frequency.to("GHz").magnitude
+    f = result.frequency.to("MHz").magnitude
     s11 = np.array(result.magnitudes["S11"].magnitude)
-    s11[(f < 3.4) | (f > 3.6)] = 0.0
+    s11[(f < 680) | (f > 720)] = 0.0
     tampered = result.replace(magnitudes={**result.magnitudes, "S11": Q(s11, "dB")})
     worst = analysis.s_parameters.worst_case(tampered)
-    in_band_loss = 2 * ch.path("in").loss_at(Q(3.5, "GHz")).magnitude
+    in_band_loss = 2 * ch.path("in").loss_at(Q(700, "MHz")).magnitude
     assert worst["S11"].magnitude == pytest.approx(model.s11_db + in_band_loss, abs=0.2)
 
 

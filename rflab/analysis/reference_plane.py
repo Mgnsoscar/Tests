@@ -11,8 +11,9 @@ What each measurement needs:
 - **Compression, harmonics, intermodulation** — input levels lose the input
   path (``in.after``), output levels gain back the output path (``out.before``).
 - **S-parameters** — a reflection passes its port's path twice, so the
-  magnitude gains back **2×** the path loss; phase would need the electrical
-  length and is left as measured.
+  magnitude gains back **2×** the path loss; a transmission (S21, S12) passes
+  the input path and the output path once each, so its magnitude gains back
+  both losses. Phase would need the electrical length and is left as measured.
 - **Noise figure** — the K30 application already accounted for the losses
   (``reference_plane == "dut"``). Should a raw K30 result ever be loaded, the
   passive input loss L (at room temperature) is subtracted from the noise
@@ -91,15 +92,18 @@ def _intermodulation(result: IntermodulationResult, extrapolate: bool = False) -
 def _s_parameters(result: SParameterResult, extrapolate: bool = False) -> SParameterResult:
     if result.reference_plane == "dut":
         return result
-    port_of = {"S11": "in", "S22": "out"}
+    loss_in = result.path("in").loss_at(result.frequency, extrapolate)
+    loss_out = result.path("out").loss_at(result.frequency, extrapolate)
     magnitudes: dict[str, Quantity] = {}
     for name, magnitude in result.magnitudes.items():
-        port = port_of.get(name)
-        if port is None:  # a transmission parameter: not a reflection, leave as measured
+        if name == "S11":
+            magnitudes[name] = magnitude + loss_in + loss_in
+        elif name == "S22":
+            magnitudes[name] = magnitude + loss_out + loss_out
+        elif name in ("S21", "S12"):
+            magnitudes[name] = magnitude + loss_in + loss_out
+        else:  # not a two-port parameter of this channel: leave as measured
             magnitudes[name] = magnitude
-            continue
-        loss = result.path(port).loss_at(result.frequency, extrapolate)
-        magnitudes[name] = magnitude + loss + loss
     return result.replace(magnitudes=magnitudes, reference_plane="dut")
 
 
