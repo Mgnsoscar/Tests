@@ -7,7 +7,7 @@ For every channel in the edit block the script gathers the saved S-parameter
 results (one per DUT configuration: attenuation and bypass), keeps the latest
 result of each configuration, and answers the requirements:
 
-- **S21**: main gain (highest attenuation, bypass on) and max gain (no
+- **S21**: min gain (highest attenuation, bypass on) and max gain (no
   attenuation, bypass off); the filter cutoff — at least X dB below the
   centre gain Y MHz outside the band; the passband variation — less than
   Z dB from the centre gain inside the band. X, Y, Z come from the channel's

@@ -14,7 +14,7 @@ the DUT plane and answers the specification's questions:
   ``f_stop`` the gain must be at least X (``cutoff_rejection``) below the
   nominal gain.
 
-Two configurations are singled out: the **main gain** (the highest
+Two configurations are singled out: the **min gain** (the highest
 attenuation with the bypass on) and the **max gain** (no attenuation, bypass
 off).
 
@@ -74,7 +74,7 @@ __all__ = [
     "plot_reflection",
 ]
 
-#: Line widths: the main and max gain configurations (and the average) stand out, the rest are thin.
+#: Line widths: the min and max gain configurations (and the average) stand out, the rest are thin.
 _BOLD, _THIN = 2.6, 1.5
 #: Type sizes (points). The pages are read on a screen across a desk, so nothing is small.
 _TITLE, _SUBTITLE, _PANEL, _HEADING, _TEXT, _HEADER, _CHIP, _NOTE = 20.0, 13.5, 13.0, 14.0, 12.5, 11.0, 11.0, 12.0
@@ -342,7 +342,7 @@ class ChannelReport:
     #: One evaluation per configuration (latest result each), in attenuation order.
     gains: list[GainEvaluation]
     #: Highest attenuation with the bypass on.
-    main: Optional[GainEvaluation]
+    min_gain: Optional[GainEvaluation]
     #: Lowest attenuation with the bypass off.
     max_gain: Optional[GainEvaluation]
     #: ``{"S11": ..., "S22": ...}`` for the reflection parameters that were measured.
@@ -371,7 +371,7 @@ class ChannelReport:
         for e in self.gains:
             when = e.result.timestamp.strftime("%Y-%m-%d %H:%M")
             lines.append(f"  {e.label} [{when}]: {e.describe()}")
-        lines.append(_gain_line("Main gain (highest attenuation, bypass on)", self.main))
+        lines.append(_gain_line("Min gain (highest attenuation, bypass on)", self.min_gain))
         lines.append(_gain_line("Max gain (no attenuation, bypass off)", self.max_gain))
         for avg in self.reflections.values():
             lines.append(avg.describe())
@@ -408,7 +408,7 @@ def report(channel: Channel, results: Iterable[SParameterResult], dut: Optional[
         dut=dut or f"{latest[0].dut} {latest[0].version}",
         channel=channel,
         gains=gains,
-        main=_pick(gains, bypass=True, highest_attenuation=True),
+        min_gain=_pick(gains, bypass=True, highest_attenuation=True),
         max_gain=_pick(gains, bypass=False, highest_attenuation=False),
         reflections=reflections,
     )
@@ -442,10 +442,10 @@ def _palette(report_: ChannelReport, theme: Theme) -> dict[str, str]:
 
 
 def _emphasis(report_: ChannelReport, e: GainEvaluation) -> Optional[str]:
-    if e is report_.main and e is report_.max_gain:
-        return "main = max gain"
-    if e is report_.main:
-        return "main gain"
+    if e is report_.min_gain and e is report_.max_gain:
+        return "min = max gain"
+    if e is report_.min_gain:
+        return "min gain"
     if e is report_.max_gain:
         return "max gain"
     return None
@@ -547,7 +547,7 @@ def _gain_column(report_: ChannelReport, colors: dict[str, str], theme: Theme) -
             objects.append(Text(line, 0.0, y, color=theme.ink_secondary, size=_NOTE, line_spacing=1.25))
             y -= 0.085
     objects.append(Text(
-        "Main gain: highest attenuation, bypass on\nMax gain: no attenuation, bypass off",
+        "Min gain: highest attenuation, bypass on\nMax gain: no attenuation, bypass off",
         0.0, y, color=theme.ink_secondary, size=_NOTE, line_spacing=1.25,
     ))
     y -= 0.085
@@ -572,10 +572,10 @@ def plot_gain(
     sweep = _sweep(e.result.frequency for e in report_.gains)
     room = 0.12 * (sweep[1] - sweep[0])   # space for the direct labels at the right end
 
-    main, max_gain = report_.main, report_.max_gain
+    min_gain, max_gain = report_.min_gain, report_.max_gain
     subtitle = []
-    if main is not None:
-        subtitle.append(f"Main gain {main.gain_nominal.magnitude:.1f} dB")
+    if min_gain is not None:
+        subtitle.append(f"Min gain {min_gain.gain_nominal.magnitude:.1f} dB")
     if max_gain is not None:
         subtitle.append(f"Max gain {max_gain.gain_nominal.magnitude:.1f} dB")
     subtitle.append(f"band {_mhz(f0):g}–{_mhz(f1):g} MHz, centre {_mhz(fc):g} MHz")
@@ -604,16 +604,16 @@ def plot_gain(
         deviation = Q(_db(s21) - float(e.gain_nominal.magnitude), "dB")
         bottom.append(LinePlot(f, deviation, color=color, width=width, alpha=alpha, min_x=f0, max_x=f1))
 
-    # the cutoff requirement, drawn once for the main-gain configuration: a short limit dash
+    # the cutoff requirement, drawn once for the min-gain configuration: a short limit dash
     top_title = "Gain over the measured range · passband shaded · dots = cutoff points"
-    if r is not None and main is not None and main.rejection_above is not None:
+    if r is not None and min_gain is not None and min_gain.rejection_above is not None:
         yc, x_lim = r.cutoff_offset, r.cutoff_rejection
-        level = Q(float(main.gain_nominal.magnitude - x_lim.magnitude), "dB")
+        level = Q(float(min_gain.gain_nominal.magnitude - x_lim.magnitude), "dB")
         dash = Q(3, "MHz")
         for x in (ch.f_start - yc, ch.f_stop + yc):
             top.append(HLine(level, color=theme.ink_secondary, style="--", width=1.2,
                              from_x=(x - dash).to("MHz"), to_x=(x + dash).to("MHz")))
-        top_title += f" · dashes = the main gain's limit ({x_lim:~} below its centre gain)"
+        top_title += f" · dashes = the min gain's limit ({x_lim:~} below its centre gain)"
     top += [
         _frequency_ticks(ch, sweep),
         XLimits(Q(sweep[0] - 0.02 * (sweep[1] - sweep[0]), "MHz"), Q(sweep[1] + room, "MHz")),

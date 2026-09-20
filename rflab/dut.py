@@ -15,7 +15,7 @@ The DUT's own switch settings during a test (its attenuation, whether the
 bypass is on) are not part of the definition — each run script states them
 and they travel with every result as its ``state``. The channel report
 understands the keys ``"attenuation"`` (a dB quantity) and ``"bypass"`` (a
-bool): *main gain* is the configuration with the highest attenuation and the
+bool): *min gain* is the configuration with the highest attenuation and the
 bypass on, *max gain* the lowest attenuation with the bypass off.
 
 Concrete devices are defined in :mod:`rflab.duts`.

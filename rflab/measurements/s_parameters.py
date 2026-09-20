@@ -15,7 +15,7 @@ plus the output path loss to a transmission magnitude (S21 is the gain).
 
 One result holds one DUT configuration (its ``state``: attenuation and
 bypass). Measure every configuration of interest, then
-:mod:`rflab.analysis.channel_report` compares them: main and max gain, the
+:mod:`rflab.analysis.channel_report` compares them: min and max gain, the
 filter cutoff, the passband variation, and the S11 averaged over all
 configurations.
 

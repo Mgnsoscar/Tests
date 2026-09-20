@@ -82,14 +82,14 @@ python scripts/report_channel.py --simulate # demo: measures 4 configurations on
 For each channel it takes the latest result of every configuration, moves
 them to the DUT plane, and answers the specification:
 
-- **S21** — the **main gain** (highest attenuation, bypass on) and the **max
+- **S21** — the **min gain** (highest attenuation, bypass on) and the **max
   gain** (no attenuation, bypass off), each read at the band centre; the
   **filter cutoff** — S21 at least X dB below the centre gain Y MHz below
   `f_start` and above `f_stop`; the **passband variation** — every in-band
   point within Z dB of the centre gain. X, Y and Z are the channel's
   `requirements` in its DUT definition (`ChannelRequirements`), and every
   configuration is checked. The S21 page shows every configuration over the
-  measured range with main and max gain bold, the passband shaded, the cutoff
+  measured range with min and max gain bold, the passband shaded, the cutoff
   frequencies as labelled ticks and the cutoff points as dots; a second panel
   shows the passband gain relative to the centre gain against the ±Z limit.
   Every number and verdict sits in a results column beside the plots, one row

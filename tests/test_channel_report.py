@@ -1,4 +1,4 @@
-"""The channel requirements report: main/max gain, cutoff, passband variation, S11 average."""
+"""The channel requirements report: min/max gain, cutoff, passband variation, S11 average."""
 
 from __future__ import annotations
 
@@ -92,9 +92,9 @@ def test_report_answers_the_requirements(bench: SimulatedBench, dut: DUT, model:
     ch = dut.channel(1)
     rep = channel_report.report(ch, _measure_all(bench, dut, ch), dut=dut.label)
 
-    assert rep.main is not None and rep.max_gain is not None
-    assert rep.main.label == "attenuation 12 dB bypass on"
-    assert rep.main.gain_nominal.magnitude == pytest.approx(model.gain_db - 12 - model.bypass_stage_gain_db, abs=1e-6)
+    assert rep.min_gain is not None and rep.max_gain is not None
+    assert rep.min_gain.label == "attenuation 12 dB bypass on"
+    assert rep.min_gain.gain_nominal.magnitude == pytest.approx(model.gain_db - 12 - model.bypass_stage_gain_db, abs=1e-6)
     assert rep.max_gain.label == "attenuation 0 dB bypass off"
     assert rep.max_gain.gain_nominal.magnitude == pytest.approx(model.gain_db, abs=1e-6)
 
@@ -117,7 +117,7 @@ def test_report_answers_the_requirements(bench: SimulatedBench, dut: DUT, model:
     assert s11.worst_individual[0] == "attenuation 12 dB bypass on"
 
     text = rep.text()
-    assert "Main gain (highest attenuation, bypass on): -2.00 dB" in text
+    assert "Min gain (highest attenuation, bypass on): -2.00 dB" in text
     assert "Max gain (no attenuation, bypass off): 20.00 dB" in text
     assert "S21 requirements: PASS" in text
     assert "S11 average of 4 configurations" in text
@@ -129,14 +129,14 @@ def test_report_flags_failures_and_missing_configurations(bench: SimulatedBench,
         ch.number, ch.f_start, ch.f_stop, ch.ports,
         requirements=ChannelRequirements(Q(40, "dB"), Q(20, "MHz"), Q(0.2, "dB")),
     )
-    # only bypass-off configurations measured: no "main gain" configuration exists
+    # only bypass-off configurations measured: no "min gain" configuration exists
     results = _measure_all(bench, dut, strict)[:3]
     rep = channel_report.report(strict, results)
-    assert rep.main is None and rep.max_gain is not None
+    assert rep.min_gain is None and rep.max_gain is not None
     assert all(e.variation_ok is False and e.rejection_ok is False for e in rep.gains)
     assert rep.passed is False
     text = rep.text()
-    assert "Main gain (highest attenuation, bypass on): no such configuration measured" in text
+    assert "Min gain (highest attenuation, bypass on): no such configuration measured" in text
     assert "S21 requirements: FAIL — failed:" in text
 
 
