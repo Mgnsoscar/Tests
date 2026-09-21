@@ -12,13 +12,14 @@ Which instrument does what:
 - ``vna``   — R&S ZNLE18 vector network analyzer: S11 / S22.
 - ``gen_a`` — Keysight N5183A MXG: the main (and first IMD) tone.
 - ``gen_b`` — Aim-TTi TGR6000: the second IMD tone.
+- ``scope`` — R&S RTO64 oscilloscope: contact monitoring during environmental tests.
 """
 
 from __future__ import annotations
 
 from typing import Protocol
 
-from labkit.instruments import FSV3007, N5183A, TGR6000, ZNLE18, TestEnvironment
+from labkit.instruments import FSV3007, N5183A, RTO64, TGR6000, ZNLE18, TestEnvironment
 
 __all__ = ["LabBench", "BenchLike", "bench"]
 
@@ -30,12 +31,14 @@ class LabBench(TestEnvironment):
     vna: ZNLE18
     gen_a: N5183A
     gen_b: TGR6000
+    scope: RTO64
 
     def _configure_instruments(self) -> None:
         self.fsv = FSV3007(self, "Spectrum analyzer", "192.168.0.10")
         self.vna = ZNLE18(self, "Network analyzer", "192.168.0.11")
         self.gen_a = N5183A(self, "Signal generator A", "192.168.0.12")
         self.gen_b = TGR6000(self, "Signal generator B", "192.168.0.13")
+        self.scope = RTO64(self, "Oscilloscope", "192.168.0.14")
 
 
 class BenchLike(Protocol):
@@ -46,6 +49,7 @@ class BenchLike(Protocol):
     vna: ZNLE18
     gen_a: N5183A
     gen_b: TGR6000
+    scope: RTO64
 
 
 def bench(dummy: bool = False) -> LabBench:

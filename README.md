@@ -15,11 +15,13 @@ rflab/
   measurements/       acquisition: compression, noise_figure, s_parameters, harmonics, intermodulation
   store.py            "(B) " folders, "{date} (B) " files, CSV save + load
   analysis/           at_dut() reference-plane correction, summaries, plots
+  monitoring/         long-running monitors: continuity.py (contact dropouts on the scope)
   simulation.py       a simulated bench so everything runs without hardware
 scripts/
   run_<measurement>.py   edit the block at the top, then: measure -> save [-> analyse]
   analyze.py             load -> at_dut -> summarize -> plot, for saved results
   report_channel.py      the per-channel requirements report from all S-parameter results
+  monitor_continuity.py  contact monitoring on the oscilloscope during environmental tests
   characterize_component.py   measure a component on the VNA (fixture de-embedded) into components/data/
 tests/                pytest suite against the simulated bench
 results/              the data (not committed)
@@ -68,6 +70,25 @@ the instrument's cal pool under `CALIBRATION_NAME` plus the sweep range),
 done, and the instrument's correction state and date, are recorded with every
 result. `--skip-calibration` skips the dialog. Set a fixed `frequency_range`
 covering every channel instead if one calibration should serve them all.
+
+## Contact monitoring during environmental tests
+
+`scripts/monitor_continuity.py` watches a DUT's electrical contact on the
+RTO64 for as long as a temperature, shock or vibration test runs. The circuit:
+a lab supply at 2 V (50 mA limit) through a 50 Ω resistor soldered to the
+antenna body, through the contact under test, down the coax into the scope's
+50 Ω input, supply negative to the DUT ground. Closed contact = 1 V at the
+scope, open = 0 V within nanoseconds. The scope triggers on the falling edge
+in NORMAL mode with fast segmentation, so every dropout is captured with its
+own timestamp and bursts are not missed. Every minute the script stops the
+scope, reads the stored acquisitions, appends each dropout to
+`results/(B) <DUT>/(B) Continuity/{date} (B) Continuity <test> events.csv`
+(scope date and time, relative time, and for the first events of the interval
+the measured dropout duration) and flushes the file; the companion
+`... intervals.csv` records each interval's start and stop on the PC clock, the
+event count, the readout dead time and whether the scope's memory filled.
+Ctrl-C stops after reading out the current interval. Before the chamber
+closes, pull the connector once by hand and check the file shows it.
 
 ## Channel requirements report
 

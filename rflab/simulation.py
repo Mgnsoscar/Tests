@@ -34,11 +34,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any, Mapping, Optional
 
 import numpy as np
 
-from labkit.instruments import FSV3007, N5183A, TGR6000, ZNLE18
+from labkit.instruments import FSV3007, N5183A, RTO64, TGR6000, ZNLE18
 from labkit.instruments.mock import MockBackend, mock_instrument
 from labkit.signal_path import SignalPath
 from labkit.units import quantity
@@ -152,12 +153,18 @@ class SimulatedBench:
     vna: ZNLE18
     gen_a: N5183A
     gen_b: TGR6000
+    scope: RTO64
 
     def __init__(self, model: Optional[AmplifierModel] = None) -> None:
         self.model = model or AmplifierModel()
         #: The signal paths between the instruments and the DUT ports (none until ``set_dut``).
         self.paths: dict[str, SignalPath] = {}
         self._rng = np.random.default_rng(seed=7)
+        #: The simulated contact: this many dropouts are "captured" per single run of the scope.
+        self.dropouts_per_run = 3
+        #: Each simulated dropout lasts this long (seconds); the k-th one k times as long.
+        self.dropout_seconds = 2e-6
+        self.scope, self.scope_backend = mock_instrument(RTO64, name="Oscilloscope", responses=self._scope)
         self.gen_a, self.gen_a_backend = mock_instrument(
             N5183A, name="Signal generator A", responses={"*IDN?": "Agilent Technologies, N5183A, SIM, 1.0"}
         )
@@ -308,6 +315,45 @@ class SimulatedBench:
                 noise = self._rng.normal(0.0, self.model.noise_db, len(db))
                 db = [v + n for v, n in zip(db, noise)]
             return ",".join(f"{_num(10 ** (v / 20))},0.0" for v in db)
+        return ""
+
+
+    # -- oscilloscope ----------------------------------------------------------
+    def _scope(self, query: str) -> str:
+        """A contact that drops out `dropouts_per_run` times per run, 1 V closed, 0 V open."""
+        w = self.scope_backend.writes
+        if query == "*IDN?":
+            return "Rohde&Schwarz,RTO,SIM,1.0"
+        if query == "*OPC?":
+            return "1"
+        if query == "SYST:ERR?":
+            return '0,"No error"'
+        now = datetime.now()
+        if query == "SYST:DATE?":
+            return f"{now.year},{now.month},{now.day}"
+        if query == "SYST:TIME?":
+            return f"{now.hour},{now.minute},{now.second}"
+        ran = _last(w, r"^(RUNS)$") is not None
+        count = self.dropouts_per_run if ran else 0
+        if query == "ACQ:AVA?":
+            return str(count)
+        index = int(_last_float(w, r"^CHAN\d:WAV1:HIST:CURR (\S+)$", 0.0))
+        relative = 0.4 * index                      # 0.4 s between dropouts, newest at 0
+        if query.endswith("HIST:CURR?"):
+            return str(index)
+        if query.endswith("HIST:TSD?"):
+            return f"'{(now + timedelta(seconds=relative)).date().isoformat()}'"
+        if query.endswith("HIST:TSAB?"):
+            return f"'{(now + timedelta(seconds=relative)).strftime('%H:%M:%S.%f')}000'"
+        if query.endswith("HIST:TSR?"):
+            return _num(relative)
+        if query.endswith("DATA:HEAD?"):
+            return f"{_num(-1e-5)},{_num(4e-5)},1001,1"
+        if query.endswith("DATA?"):
+            t = np.linspace(-1e-5, 4e-5, 1001)
+            k = count + index                       # oldest dropout = 1, newest = count
+            v = np.where((t >= 0) & (t < k * self.dropout_seconds), 0.0, 1.0)
+            return ",".join(_num(x) for x in v)
         return ""
 
 
