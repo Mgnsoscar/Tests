@@ -71,6 +71,39 @@ done, and the instrument's correction state and date, are recorded with every
 result. `--skip-calibration` skips the dialog. Set a fixed `frequency_range`
 covering every channel instead if one calibration should serve them all.
 
+## Moving to a lab computer without internet
+
+`scripts/offline/make_bundle.py` packs both repositories and every
+dependency into one folder for a USB stick, and `install.py` inside that
+folder installs it all without a network. On a computer **with** internet,
+with the LabKit checkout next to this one:
+
+```bash
+python scripts/offline/make_bundle.py --out /media/usb/rflab-bundle                 # 64-bit Windows, Python 3.11 (the defaults)
+python scripts/offline/make_bundle.py --out /media/usb/rflab-bundle --platform manylinux_2_17_x86_64 --python 3.12
+```
+
+The wheels are downloaded for the *lab computer's* platform and Python
+version, so the bundle can be made on a Linux or macOS machine for a Windows
+lab PC. The bundle's `bundle.json` records what it was made for, and the
+installer refuses to run under a different Python. It includes `pyvisa-py`,
+so the Ethernet instruments work without NI-VISA (if NI-VISA or R&S VISA is
+installed, PyVISA prefers it on its own).
+
+On the lab computer: copy the folder onto its **own disk** (both packages are
+installed in place, so the folder must stay put), open a terminal there and run
+
+```bash
+python install.py --venv .venv        # a fresh virtual environment in the folder (recommended)
+python install.py                     # or straight into that Python
+```
+
+It ends with an import check that prints the VISA backend in use. Then
+`cd rflab` and run the scripts as usual; `python scripts/monitor_continuity.py
+--simulate` and `python -m pytest` need no instruments. Edits to the scripts'
+edit blocks and to the DUT definitions in that `rflab` folder take effect
+immediately.
+
 ## Contact monitoring during environmental tests
 
 `scripts/monitor_continuity.py` watches a DUT's electrical contact on the
