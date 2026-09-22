@@ -73,10 +73,10 @@ covering every channel instead if one calibration should serve them all.
 
 ## Moving to a lab computer without internet
 
-`scripts/offline/make_bundle.py` packs both repositories and every
-dependency into one folder for a USB stick, and `install.py` inside that
-folder installs it all without a network. On a computer **with** internet,
-with the LabKit checkout next to this one:
+`scripts/offline/make_bundle.py` packs the LabKit wheel, every dependency
+and a copy of this project into one folder for a USB stick, and `install.py`
+inside that folder installs it all without a network. On a computer **with**
+internet, with the LabKit checkout next to this one:
 
 ```bash
 python scripts/offline/make_bundle.py --out /media/usb/rflab-bundle                 # 64-bit Windows, Python 3.11 (the defaults)
@@ -90,19 +90,32 @@ installer refuses to run under a different Python. It includes `pyvisa-py`,
 so the Ethernet instruments work without NI-VISA (if NI-VISA or R&S VISA is
 installed, PyVISA prefers it on its own).
 
-On the lab computer: copy the folder onto its **own disk** (both packages are
-installed in place, so the folder must stay put), open a terminal there and run
+On the lab computer, open a terminal in the bundle folder and run
 
-```bash
-python install.py --venv .venv        # a fresh virtual environment in the folder (recommended)
-python install.py                     # or straight into that Python
+```
+python install.py --venv C:\labkit-env --project C:\rflab
 ```
 
-It ends with an import check that prints the VISA backend in use. Then
-`cd rflab` and run the scripts as usual; `python scripts/monitor_continuity.py
---simulate` and `python -m pytest` need no instruments. Edits to the scripts'
-edit blocks and to the DUT definitions in that `rflab` folder take effect
-immediately.
+which leaves this layout:
+
+```
+C:\labkit-env\     a virtual environment with LabKit, its plotting and instrument extras,
+                   pyvisa-py, pytest and mypy installed inside it
+C:\rflab\          this project: rflab/, scripts/, tests/, and results/ once measurements run
+```
+
+Nothing about rflab is installed into the environment: the project folder is
+self-contained, and `python -m pytest` works from it because the pytest
+configuration adds the folder to the import path. Any other project on that
+computer uses LabKit by activating the same environment (or choosing its
+interpreter in the editor) and importing `labkit`; a second environment can be
+made later by running `install.py` again with another `--venv`, since the
+bundle keeps working offline. Once installed, the bundle folder can be deleted.
+
+The installer ends with an import check that prints the VISA backend in use.
+Then activate the environment, `cd C:\rflab`, and run the scripts as usual;
+`python scripts\monitor_continuity.py --simulate` and `python -m pytest`
+need no instruments.
 
 ## Contact monitoring during environmental tests
 

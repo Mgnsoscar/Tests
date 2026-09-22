@@ -6,11 +6,13 @@ LabKit checkout next to it (or point at it with ``--labkit``):
     python scripts/offline/make_bundle.py --out /path/to/usb/rflab-bundle
     python scripts/offline/make_bundle.py --out D:\\rflab-bundle --platform win_amd64 --python 3.11
 
-The bundle holds a copy of both repositories, every dependency as a wheel
-built for the lab computer's platform and Python version (``--platform`` and
-``--python``; the defaults are 64-bit Windows and Python 3.11), the installer
-``install.py`` and a README. On the lab computer, copy the bundle to its disk
-and run ``python install.py`` there — see the README it writes.
+The bundle holds the LabKit wheel and every dependency as a wheel built for
+the lab computer's platform and Python version (``--platform`` and
+``--python``; the defaults are 64-bit Windows and Python 3.11), a copy of
+both repositories, the installer ``install.py`` and a README. On the lab
+computer ``python install.py --venv ... --project ...`` creates a virtual
+environment with LabKit inside it and puts the rflab project folder where
+you want it — see the README it writes.
 
 The wheels are downloaded with pip's cross-platform options, so this works
 from a Linux or macOS machine for a Windows lab computer; ``--platform
@@ -31,10 +33,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 RFLAB_ROOT = HERE.parent.parent
 
-#: Packages needed beyond what the two pyproject files declare: the pure-Python
-#: VISA backend (so no NI-VISA is required for the Ethernet instruments) and
-#: the build backend both projects use, for the editable installs offline.
-EXTRA_REQUIREMENTS = ["pyvisa-py>=0.7", "hatchling", "editables"]
+#: Needed beyond what the two pyproject files declare: the pure-Python VISA
+#: backend, so no NI-VISA is required for the Ethernet instruments.
+EXTRA_REQUIREMENTS = ["pyvisa-py>=0.7"]
 
 #: What is copied out of each repository: everything git tracks, or, without
 #: git, everything but these.
@@ -67,6 +68,8 @@ def main() -> None:
     print(f"copying rflab from {RFLAB_ROOT}")
     copy_repo(RFLAB_ROOT, out / "rflab")
 
+    print("building the LabKit wheel")
+    subprocess.run([sys.executable, "-m", "pip", "wheel", "--no-deps", "--wheel-dir", str(out / "wheelhouse"), str(labkit)], check=True)
     requirements = collect_requirements(labkit, RFLAB_ROOT) + EXTRA_REQUIREMENTS
     (out / "requirements.txt").write_text("\n".join(requirements) + "\n", encoding="utf-8")
     print(f"downloading {len(requirements)} requirements for {args.platform}, Python {args.python} ...")
@@ -85,7 +88,7 @@ def main() -> None:
     wheels = sorted(out.glob("wheelhouse/*"))
     size = sum(w.stat().st_size for w in wheels) / 1e6
     print(f"bundle ready at {out}: {len(wheels)} wheels, {size:.0f} MB")
-    print("on the lab computer: copy the folder to its disk, then run  python install.py  inside it")
+    print("on the lab computer:  python install.py --venv <env folder> --project <project folder>")
 
 
 def copy_repo(source: Path, target: Path) -> None:
@@ -154,35 +157,42 @@ README = """rflab offline bundle
 ====================
 
 Contents
-  LabKit/            the LabKit framework (a copy of the repository)
+  wheelhouse/        LabKit and every dependency as wheels for the lab computer (bundle.json: platform, Python)
   rflab/             the measurement project: rflab package, scripts, tests
-  wheelhouse/        every dependency as a wheel for the lab computer (see bundle.json for platform and Python)
+  LabKit/            the LabKit source, for reading and its docs (the install uses the wheel)
   install.py         the installer
   requirements.txt   what the wheelhouse holds
 
 Install on the lab computer
-  1. Copy this whole folder onto the computer's own disk, e.g. C:\\rflab-bundle.
-     Do not install from the USB stick: the packages are installed "in place",
-     so the folder must stay where it is.
-  2. Check the Python version matches bundle.json (python --version).
-  3. Open a terminal in the folder and run
+  1. Check the Python version matches bundle.json (python --version).
+  2. Open a terminal in this folder and run, with folders of your choosing:
 
-        python install.py                 into this Python
-        python install.py --venv .venv    into a new virtual environment in the folder (recommended)
+        python install.py --venv C:\\labkit-env --project C:\\rflab
 
-  4. Try it, no instruments needed:
+     --venv     creates a virtual environment there with LabKit, its plotting and
+                instrument extras, pyvisa-py, pytest and mypy inside it
+     --project  copies the rflab project folder there (scripts, DUTs, tests; results go under it)
 
-        cd rflab
-        python scripts\\monitor_continuity.py --simulate
+     Without --venv the packages go into the Python you ran the installer with.
+     Without --project the project stays in this bundle folder.
+
+  3. Use it: activate the environment, go to the project, run the scripts.
+
+        C:\\labkit-env\\Scripts\\activate
+        cd C:\\rflab
+        python scripts\\monitor_continuity.py --simulate      no instruments needed
         python -m pytest
 
-Editing the scripts' "Edit before running" blocks and the DUT definitions is
-done directly in the rflab folder; the install sees the edits at once.
+Other projects
+  Any folder can use LabKit the same way: activate the same environment (or
+  choose its interpreter in your editor) and import labkit. Nothing about rflab
+  is installed in the environment; the project folder is self-contained.
+  To make another environment later, run install.py again with another --venv;
+  the bundle keeps working offline.
 
 Instruments
-  The bundle includes pyvisa-py, a pure-Python VISA backend that talks to the
-  Ethernet instruments without NI-VISA. If NI-VISA or R&S VISA is installed on
-  the computer, PyVISA prefers it automatically.
+  pyvisa-py is a pure-Python VISA backend that talks to the Ethernet instruments
+  without NI-VISA. If NI-VISA or R&S VISA is installed, PyVISA prefers it.
 """
 
 

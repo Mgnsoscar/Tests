@@ -26,6 +26,8 @@ allow-direct-references = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+# The project runs from its folder without being installed: `python -m pytest` here finds `rflab`.
+pythonpath = ["."]
 
 [tool.mypy]
 python_version = "3.11"

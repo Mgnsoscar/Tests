@@ -1,12 +1,17 @@
-"""Install LabKit and rflab from this offline bundle, no internet needed.
+"""Install LabKit from this offline bundle and set up the rflab project folder, no internet needed.
 
-Copy the bundle folder onto the computer's disk first (the packages are
-installed in place, so the folder has to stay), then, in the folder:
+In the bundle folder, with the Python the bundle was made for:
 
-    python install.py                 install into this Python
-    python install.py --venv .venv    create a virtual environment here and install into it
+    python install.py --venv C:\\labkit-env --project C:\\rflab
 
-Standard library only; runs with the Python the bundle was made for.
+--venv     creates a virtual environment there and installs LabKit (with plotting,
+           instruments, pyvisa-py, pytest and mypy) into it; without it the
+           packages go into the Python running this script
+--project  copies the rflab project folder there; without it the project stays
+           in the bundle folder
+
+Nothing about rflab is installed into the environment: the project folder is
+self-contained and any environment with LabKit can run it. Standard library only.
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -25,6 +31,7 @@ WHEELHOUSE = HERE / "wheelhouse"
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--venv", default=None, help="create this virtual environment and install into it")
+    p.add_argument("--project", default=None, help="copy the rflab project folder to this path")
     args = p.parse_args()
 
     info = json.loads((HERE / "bundle.json").read_text(encoding="utf-8"))
@@ -42,42 +49,43 @@ def main() -> None:
         venv = Path(args.venv).resolve()
         print(f"creating virtual environment {venv}")
         run([sys.executable, "-m", "venv", str(venv)])
-        python = str(venv / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python"))
+        python = str(venv / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python"))
 
-    offline = [python, "-m", "pip", "install", "--no-index", "--find-links", str(WHEELHOUSE)]
-    print("installing the build backend")
-    run(offline + ["hatchling", "editables"])
-    print("installing LabKit with plotting, instruments and the test tools")
-    run(offline + ["--no-build-isolation", "-e", f"{HERE / 'LabKit'}[dev]"])
-    print("installing the pure-Python VISA backend")
-    run(offline + ["pyvisa-py"])
-    print("installing rflab")
-    run(offline + ["--no-build-isolation", "--no-deps", "-e", str(HERE / "rflab")])
-    run(offline + ["pytest", "mypy"])
+    print("installing LabKit with plotting, instruments, pyvisa-py and the test tools")
+    run([python, "-m", "pip", "install", "--no-index", "--find-links", str(WHEELHOUSE),
+         "labkit[all]", "pyvisa-py", "pytest", "mypy"])
+
+    project = HERE / "rflab"
+    if args.project:
+        project = Path(args.project).resolve()
+        if project.exists() and any(project.iterdir()):
+            sys.exit(f"{project} exists and is not empty; choose a new folder or delete it first")
+        print(f"copying the rflab project to {project}")
+        shutil.copytree(HERE / "rflab", project, dirs_exist_ok=True)
 
     print("checking the install")
-    run([python, "-c", CHECK])
+    run([python, "-c", CHECK], cwd=project)
     print()
-    print(f"done. LabKit and rflab are installed from {HERE} — keep this folder where it is.")
+    print("done.")
     if args.venv:
-        activate = (Path(args.venv) / "Scripts" / "activate") if sys.platform == "win32" else f"source {args.venv}/bin/activate"
-        print(f"activate the environment first in every new terminal:  {activate}")
-    print(f"try:  cd {HERE / 'rflab'}  then  python scripts/monitor_continuity.py --simulate")
+        activate = f"{args.venv}\\Scripts\\activate" if sys.platform == "win32" else f"source {args.venv}/bin/activate"
+        print(f"in every new terminal:  {activate}")
+    print(f"then:  cd {project}  and  python scripts/monitor_continuity.py --simulate")
 
 
 CHECK = """
-import labkit, rflab, pyvisa, numpy, matplotlib, pint
+import labkit, pyvisa, numpy, matplotlib, pint
+import rflab
 from labkit.instruments import RTO64
-print("  labkit", labkit.__file__)
-print("  rflab ", rflab.__file__)
+print("  labkit  ", labkit.__file__)
+print("  project ", rflab.__file__)
 print("  numpy", numpy.__version__, "matplotlib", matplotlib.__version__, "pint", pint.__version__, "pyvisa", pyvisa.__version__)
-rm = pyvisa.ResourceManager()
-print("  VISA backend:", rm.visalib)
+print("  VISA backend:", pyvisa.ResourceManager().visalib)
 """
 
 
-def run(command: list[str]) -> None:
-    result = subprocess.run(command)
+def run(command: list[str], cwd: Path | None = None) -> None:
+    result = subprocess.run(command, cwd=cwd)
     if result.returncode != 0:
         sys.exit(f"failed: {' '.join(command)}")
 
