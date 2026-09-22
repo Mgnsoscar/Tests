@@ -78,17 +78,29 @@ RTO64 for as long as a temperature, shock or vibration test runs. The circuit:
 a lab supply at 2 V (50 mA limit) through a 50 Ω resistor soldered to the
 antenna body, through the contact under test, down the coax into the scope's
 50 Ω input, supply negative to the DUT ground. Closed contact = 1 V at the
-scope, open = 0 V within nanoseconds. The scope triggers on the falling edge
-in NORMAL mode with fast segmentation, so every dropout is captured with its
-own timestamp and bursts are not missed. Every minute the script stops the
-scope, reads the stored acquisitions, appends each dropout to
-`results/(B) <DUT>/(B) Continuity/{date} (B) Continuity <test> events.csv`
-(scope date and time, relative time, and for the first events of the interval
-the measured dropout duration) and flushes the file; the companion
-`... intervals.csv` records each interval's start and stop on the PC clock, the
-event count, the readout dead time and whether the scope's memory filled.
-Ctrl-C stops after reading out the current interval. Before the chamber
-closes, pull the connector once by hand and check the file shows it.
+scope, open = 0 V within nanoseconds. The scope triggers on **either** edge
+through 0.5 V in NORMAL mode with fast segmentation, so every opening and
+every closing is captured with its own timestamp, and each record is taken in
+peak-detect mode, so any crossing the trigger saw is in the record too.
+Every minute the script stops the scope, reads every stored acquisition,
+analyses its record for the threshold crossings it holds, stitches the
+crossings of the interval into one timeline and pairs each falling crossing
+with the rising one that closes it — nothing is inferred from the order of
+triggers alone, and openings closer than 10 µs count as one bouncing
+dropout. One acquisition is forced at the start of every interval so the
+contact state at that moment is on record. Three files are written under
+`results/(B) <DUT>/(B) Continuity/{date} (B) Continuity <test> ...`, flushed
+after every row: `acquisitions.csv` (one row per trigger: scope timestamp,
+the edge, the crossings in its record, min/max voltage — the raw evidence),
+`dropouts.csv` (one row per dropout: start on the scope clock, duration in
+µs, whether that duration is *exact*, *approx* — an edge fell into the scope's
+few-µs blind time after a record, or the dropout spans a readout stop and
+was measured on the scope's absolute clock — or *at least* — the closing was
+never seen — the number of merged openings and a note), and `intervals.csv`
+(each interval's start and stop on the PC clock, the acquisition count, the
+readout dead time and whether the scope's memory filled). Ctrl-C stops after
+reading out the current interval. Before the chamber closes, pull the
+connector once by hand and check the dropouts file shows it.
 
 ## Channel requirements report
 

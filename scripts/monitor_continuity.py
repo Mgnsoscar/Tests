@@ -9,13 +9,16 @@ Edit the block below, then:
     python scripts/monitor_continuity.py            # runs until Ctrl-C
     python scripts/monitor_continuity.py --simulate # three short intervals on the simulated scope
 
-Every dropout is written to the events file with the scope's timestamp the
-moment its interval is read out, and the file is flushed after every row.
-The intervals file records each interval's start/stop on the PC clock, its
-event count and the readout dead time, so coverage gaps are on record.
+The scope triggers on both edges; every acquisition is read out at the end
+of its interval and its record analysed for the crossings it holds. Three
+files are written, flushed after every row:
+
+    ... acquisitions.csv   one row per trigger: timestamp, edge, crossings, min/max (the raw evidence)
+    ... dropouts.csv       one row per dropout: start on the scope clock, duration, how certain it is
+    ... intervals.csv      each interval's start/stop on the PC clock, dead time, memory-full flag
 
 Before the chamber closes: run it, pull the connector once by hand, tap the
-cable, and check the events file shows those with sensible times.
+cable, and check the dropouts file shows those with sensible times.
 """
 
 from __future__ import annotations
@@ -37,14 +40,12 @@ TEST = "vibration"                   # goes into the file names: which environme
 SETTINGS = ContinuitySettings(
     channel=1,                       # scope channel the coax is on
     closed_level=Q(1.0, "V"),        # 2 V through 50 Ω + the 50 Ω input
-    trigger_level=Q(0.5, "V"),       # a dropout is a falling edge through this level ...
-    slope="NEGATIVE",                # ... use "POSITIVE" for the flipped circuit (DC into the coax, antenna shorted)
-    holdoff=Q(10, "us"),             # one bouncing contact = one event
-    window=Q(50, "us"),              # record kept around each dropout, 20 % before the edge
-    sample_rate=Q(200, "MHz"),       # 5 ns per point in that record
-    segments=10_000,                 # events the scope can hold per interval before it stops early
-    interval=Q(60, "s"),             # how often the events are read out and saved
-    waveforms_per_interval=20,       # events per interval whose record is read to measure the duration
+    threshold=Q(0.5, "V"),           # trigger level; below it the contact counts as open
+    window=Q(50, "us"),              # record kept around each edge, 20 % before it
+    sample_rate=Q(50, "MHz"),        # 20 ns per point in that record (peak detect: nothing shorter is missed)
+    segments=10_000,                 # acquisitions the scope can hold per interval before it stops early
+    interval=Q(60, "s"),             # how often the acquisitions are read out and saved
+    merge_within=Q(10, "us"),        # openings closer together than this are one bouncing dropout
 )
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -77,19 +78,20 @@ def main() -> None:
         "Scope clock minus PC clock [s]": f"{offset:.1f}",
         "Instrument": scope.get_id(),
         "Channel": str(settings.channel),
-        "Trigger": f"{settings.slope.lower()} edge through {settings.trigger_level:~}, holdoff {settings.holdoff:~}",
-        "Record": f"{settings.window:~} at {settings.sample_rate:~}, {settings.segments} segments",
+        "Trigger": f"either edge through {settings.threshold:~}; contact open below that level",
+        "Record": f"{settings.window:~} at {settings.sample_rate:~}, peak detect, {settings.segments} segments",
         "Interval": f"{settings.interval:~}",
+        "Bounce": f"openings closer than {settings.merge_within:~} are one dropout",
     })
-    print(f"logging to {log.events_path}")
-    print(f"scope clock is {offset:+.1f} s from the PC clock; timestamps in the events file are scope time")
+    print(f"logging to {log.dropouts_path}")
+    print(f"scope clock is {offset:+.1f} s from the PC clock; timestamps in the files are scope time")
     print("monitoring — Ctrl-C stops after reading out the current interval")
     try:
         total = monitor(scope, settings, log, intervals=intervals)
     finally:
         log.close()
         scope.system.set_display_update(True)
-    print(f"done: {total} dropout(s) written to {log.events_path}")
+    print(f"done: {total} dropout(s) written to {log.dropouts_path}")
 
 
 if __name__ == "__main__":

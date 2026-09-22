@@ -160,10 +160,16 @@ class SimulatedBench:
         #: The signal paths between the instruments and the DUT ports (none until ``set_dut``).
         self.paths: dict[str, SignalPath] = {}
         self._rng = np.random.default_rng(seed=7)
-        #: The simulated contact: this many dropouts are "captured" per single run of the scope.
-        self.dropouts_per_run = 3
-        #: Each simulated dropout lasts this long (seconds); the k-th one k times as long.
-        self.dropout_seconds = 2e-6
+        #: The simulated contact: when it is open, as ``(opens, closes)`` seconds into every
+        #: single run of the scope. A 2 µs dropout, a 100 µs one (long enough for the scope
+        #: to trigger on both of its edges) and a bounce (open 1 µs, closed 2 µs, open 1 µs).
+        self.contact_openings: list[tuple[float, float]] = [
+            (0.5, 0.5 + 2e-6), (1.0, 1.0 + 100e-6), (1.5, 1.5 + 1e-6), (1.5 + 3e-6, 1.5 + 4e-6),
+        ]
+        #: The simulated scope cannot trigger for this long after a record ends (re-arm time).
+        self.blind_seconds = 1e-6
+        #: The simulated scope's clock at the start of its first run; each run starts a minute later.
+        self.scope_epoch = datetime(2026, 9, 21, 8, 0, 0)
         self.scope, self.scope_backend = mock_instrument(RTO64, name="Oscilloscope", responses=self._scope)
         self.gen_a, self.gen_a_backend = mock_instrument(
             N5183A, name="Signal generator A", responses={"*IDN?": "Agilent Technologies, N5183A, SIM, 1.0"}
@@ -319,8 +325,60 @@ class SimulatedBench:
 
 
     # -- oscilloscope ----------------------------------------------------------
+    def _scope_run(self) -> tuple[list[float], Optional[datetime]]:
+        """The trigger times (seconds into the run) of the last single run, and the run's start on the scope clock.
+
+        Behaves like the instrument: an edge triggers only when its slope is
+        selected and the scope is armed — not during the record after a
+        trigger and not in the blind time after it; ``TRIG1:FORC`` after
+        ``RUNS`` adds a forced acquisition at the start; the run stops at the
+        fast-segmentation maximum.
+        """
+        w = self.scope_backend.writes
+        runs = [i for i, command in enumerate(w) if command == "RUNS"]
+        if not runs:
+            return [], None
+        forced = "TRIG1:FORC" in w[runs[-1]:]
+        window = _last_float(w, r"^TIM:RANG (\S+)$", 5e-5)
+        reference = _last_float(w, r"^TIM:REF (\S+)$", 20.0) / 100
+        post = window * (1 - reference)
+        max_segments = int(_last_float(w, r"^ACQ:SEGM:MAX (\S+)$", 1e6))
+        slope = _last(w, r"^TRIG1:EDGE:SLOP (\S+)$") or "POS"
+        crossings = sorted(
+            [(a, True) for a, _ in self.contact_openings] + [(b, False) for _, b in self.contact_openings]
+        )
+        triggers: list[float] = []
+        armed_at = 0.0
+        if forced:
+            triggers.append(0.0)
+            armed_at = post + self.blind_seconds
+        for t, falling in crossings:
+            if (slope == "NEG" and not falling) or (slope == "POS" and falling):
+                continue
+            if t < armed_at or len(triggers) >= max_segments:
+                continue
+            triggers.append(t)
+            armed_at = t + post + self.blind_seconds
+        return triggers, self.scope_epoch + timedelta(seconds=60 * (len(runs) - 1))
+
+    def _contact_record(self, trigger: float, t: np.ndarray, peak_detect: bool) -> np.ndarray:
+        """The contact voltage around `trigger`: 1 V closed, 0 V open; min/max per sample interval for peak detect."""
+        at = trigger + t
+        step = float(t[1] - t[0]) if len(t) > 1 else 0.0
+        if not peak_detect:
+            v = np.ones(len(t))
+            for a, b in self.contact_openings:
+                v[(at >= a) & (at < b)] = 0.0
+            return v
+        low = np.ones(len(t))
+        high = np.ones(len(t))
+        for a, b in self.contact_openings:
+            low[(at < b) & (at + step > a)] = 0.0          # the sample interval touches the opening
+            high[(at >= a) & (at + step <= b)] = 0.0       # the sample interval lies inside it
+        return np.column_stack([low, high]).ravel()
+
     def _scope(self, query: str) -> str:
-        """A contact that drops out `dropouts_per_run` times per run, 1 V closed, 0 V open."""
+        """The RTO64 watching the simulated contact of :attr:`contact_openings`."""
         w = self.scope_backend.writes
         if query == "*IDN?":
             return "Rohde&Schwarz,RTO,SIM,1.0"
@@ -333,27 +391,33 @@ class SimulatedBench:
             return f"{now.year},{now.month},{now.day}"
         if query == "SYST:TIME?":
             return f"{now.hour},{now.minute},{now.second}"
-        ran = _last(w, r"^(RUNS)$") is not None
-        count = self.dropouts_per_run if ran else 0
+        triggers, run_start = self._scope_run()
+        count = len(triggers)
         if query == "ACQ:AVA?":
             return str(count)
         index = int(_last_float(w, r"^CHAN\d:WAV1:HIST:CURR (\S+)$", 0.0))
-        relative = 0.4 * index                      # 0.4 s between dropouts, newest at 0
         if query.endswith("HIST:CURR?"):
             return str(index)
+        if not triggers or run_start is None:
+            return ""
+        trigger = triggers[count - 1 + index]
+        stamp = run_start + timedelta(seconds=trigger)
         if query.endswith("HIST:TSD?"):
-            return f"'{(now + timedelta(seconds=relative)).date().isoformat()}'"
+            return f"'{stamp.date().isoformat()}'"
         if query.endswith("HIST:TSAB?"):
-            return f"'{(now + timedelta(seconds=relative)).strftime('%H:%M:%S.%f')}000'"
+            return f"'{stamp.strftime('%H:%M:%S.%f')}000'"
         if query.endswith("HIST:TSR?"):
-            return _num(relative)
+            return _num(trigger - triggers[-1])
+        window = _last_float(w, r"^TIM:RANG (\S+)$", 5e-5)
+        reference = _last_float(w, r"^TIM:REF (\S+)$", 20.0) / 100
+        rate = _last_float(w, r"^ACQ:SRAT (\S+)$", 2e8)
+        peak_detect = (_last(w, r"^CHAN\d:WAV1:ARIT (\S+)$") or "OFF") == "PDET"
+        points = int(round(window * rate)) + 1
         if query.endswith("DATA:HEAD?"):
-            return f"{_num(-1e-5)},{_num(4e-5)},1001,1"
+            return f"{_num(-window * reference)},{_num(window * (1 - reference))},{points},{2 if peak_detect else 1}"
         if query.endswith("DATA?"):
-            t = np.linspace(-1e-5, 4e-5, 1001)
-            k = count + index                       # oldest dropout = 1, newest = count
-            v = np.where((t >= 0) & (t < k * self.dropout_seconds), 0.0, 1.0)
-            return ",".join(_num(x) for x in v)
+            t = np.linspace(-window * reference, window * (1 - reference), points)
+            return ",".join(_num(x) for x in self._contact_record(trigger, t, peak_detect))
         return ""
 
 
