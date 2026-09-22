@@ -33,9 +33,10 @@ have happened there is inferred and marked, so a duration is reported as
 *exact*, *approx* (an edge fell into the sub-microsecond blind time after a
 record, or the dropout spans a stop and was measured on the scope's absolute
 clock) or *at least*
-(the closing was never seen). At the start of every interval one acquisition
-is forced, so the contact state at that moment is on record even when nothing
-else triggers.
+(the closing was never seen). At the start of every interval, and every
+`snapshot_every` while it runs, one acquisition is forced: a snapshot of the
+contact state, so a level that drifted across the threshold too slowly to
+trigger is still caught and dated to within that time.
 
 How nothing is lost
 -------------------
@@ -121,6 +122,10 @@ class ContinuitySettings:
     #: Read out early when the scope already holds this fraction of its segment capacity,
     #: so a chattering contact rolls into a new interval instead of filling the memory.
     readout_when_full: float = 0.9
+    #: Force one acquisition this often while the scope runs: a snapshot of the contact
+    #: state, so a change too slow to trigger (a drifting level) is still caught and dated
+    #: to within this time.
+    snapshot_every: Quantity = Q(10, "s")
     #: Openings closer together than this are one bouncing dropout.
     merge_within: Quantity = Q(10, "us")
     #: Vertical scale, so 0 V and 1 V are both well inside the screen.
@@ -209,10 +214,12 @@ class Acquisition:
 
     @property
     def trigger(self) -> str:
-        """``forced`` for the state snapshot at the interval start, else the edge seen at the trigger."""
-        if self.number == 1 and self.analysis.trigger_edge == "none":
-            return "forced"
-        return self.analysis.trigger_edge
+        """The edge seen at the trigger point; ``forced`` for a state snapshot (no crossing near the
+        trigger point), ``glitch`` for a trigger whose record shows only a crossing too short to change the state."""
+        if self.analysis.trigger_edge != "none":
+            return self.analysis.trigger_edge
+        near = [t for t, _ in self.analysis.crossings if abs(t) < 1e-6]
+        return "glitch" if near else "forced"
 
 
 # -- the timeline of one interval ----------------------------------------------
@@ -225,8 +232,10 @@ class Crossing:
     #: Seconds relative to the newest acquisition of the interval.
     time: float
     falling: bool
-    #: Not seen in a record: deduced from the level after a blind spot of the scope.
+    #: Not seen in a record: deduced from the level at the start of the next record.
     inferred: bool = False
+    #: For an inferred crossing, the seconds between the two records it happened between.
+    window: float = 0.0
 
 
 def interval_crossings(acquisitions: list[Acquisition]) -> list[Crossing]:
@@ -235,16 +244,19 @@ def interval_crossings(acquisitions: list[Acquisition]) -> list[Crossing]:
     Where two records overlap, a crossing is taken once. Where they do not,
     the level at the end of one and at the start of the next must agree: the
     scope was armed in between and any crossing would have triggered — unless
-    it fell into the scope's blind time right after the record. A disagreement
-    is such a crossing; it is placed at the end of the earlier record and
-    marked inferred.
+    it fell into the scope's blind time right after the record, or the
+    voltage drifted across without an edge sharp enough to trigger. A
+    disagreement is such a crossing; it is placed at the end of the earlier
+    record, marked inferred, with the gap between the records as its window.
     """
     timeline: list[Crossing] = []
     covered_until: Optional[float] = None
     open_at_end = False
     for a in acquisitions:
         if covered_until is not None and a.record_start > covered_until and a.analysis.starts_open != open_at_end:
-            timeline.append(Crossing(covered_until, falling=a.analysis.starts_open, inferred=True))
+            timeline.append(Crossing(
+                covered_until, falling=a.analysis.starts_open, inferred=True, window=a.record_start - covered_until,
+            ))
         for t, falling in a.analysis.crossings:
             at = a.relative + t
             if covered_until is None or at > covered_until:
@@ -302,12 +314,14 @@ class _Dropout:
     start: float
     start_acquisition: Acquisition
     start_inferred: bool
+    start_window: float = 0.0
     #: The opening was never seen: the contact was already open when the interval's first record began.
     start_unknown: bool = False
     openings: int = 1
     end: Optional[float] = None
     end_interval: Optional[int] = None
     end_inferred: bool = False
+    end_window: float = 0.0
     #: The latest time the contact was seen open: in the start's own frame, and in any frame.
     open_until_own: float = 0.0
     open_until: float = 0.0
@@ -375,10 +389,11 @@ class DropoutTracker:
                     if settling is not None:
                         done.append(settling)
                     settling = None
-                    pending = self._open(interval, c.time, acquisitions, inferred=c.inferred)
+                    pending = self._open(interval, c.time, acquisitions, inferred=c.inferred, window=c.window)
             elif is_open and pending is not None:
                 is_open = False
                 pending.end, pending.end_interval, pending.end_inferred = c.time, interval, c.inferred
+                pending.end_window = c.window
                 self._seen_open(pending, interval, c.time)
                 settling, pending = pending, None
         if settling is not None:
@@ -401,12 +416,14 @@ class DropoutTracker:
         return [self._finish(pending)]
 
     # -- helpers -----------------------------------------------------------
-    def _open(self, interval: int, time: float, acquisitions: list[Acquisition], inferred: bool) -> _Dropout:
+    def _open(
+        self, interval: int, time: float, acquisitions: list[Acquisition], inferred: bool, window: float = 0.0
+    ) -> _Dropout:
         self.count += 1
-        d = _Dropout(self.count, interval, time, _acquisition_at(acquisitions, time), inferred)
+        d = _Dropout(self.count, interval, time, _acquisition_at(acquisitions, time), inferred, window)
         self._seen_open(d, interval, time)
         if inferred:
-            d.notes.append("opened in the scope's blind time after a record; start is that record's end")
+            d.notes.append(_inferred_note("opened", window))
         return d
 
     @staticmethod
@@ -427,7 +444,7 @@ class DropoutTracker:
     def _finish(self, d: _Dropout) -> DropoutRecord:
         duration, certainty = self._duration(d)
         if d.end_inferred:
-            d.notes.append("closed in the scope's blind time after a record; end is that record's end")
+            d.notes.append(_inferred_note("closed", d.end_window))
         acq = d.start_acquisition
         offset = d.start - acq.relative
         scope_time = _time_of_day(acq.scope_time, offset)
@@ -462,6 +479,16 @@ class DropoutTracker:
         if start is not None and end is not None:
             return end - start, "at least"
         return d.open_until_own - d.start, "at least"
+
+
+def _inferred_note(what: str, window: float) -> str:
+    """The note for a crossing no record shows: it happened in the gap between two records."""
+    if window < 1e-3:
+        cause = "the scope's blind time after the record"
+    else:
+        cause = "a change too slow to trigger, or an edge the trigger missed"
+    return (f"{what} between two records with no trigger in between, {window:.3g} s apart ({cause}); "
+            f"time taken as the earlier record's end")
 
 
 def _acquisition_at(acquisitions: list[Acquisition], time: float) -> Acquisition:
@@ -739,9 +766,10 @@ def monitor(
     Every interval: single run, one forced acquisition (the contact state at
     the start), wait, stop, read the history, write every acquisition, every
     dropout that became final and the interval record, run again. During the
-    wait the scope's acquisition count is polled once a second, and the
-    interval ends early once the memory is `readout_when_full` full, so a
-    burst of edges rolls into a new interval instead of stopping the scope.
+    wait a snapshot acquisition is forced every `snapshot_every`, and the
+    scope's acquisition count is polled once a second: the interval ends
+    early once the memory is `readout_when_full` full, so a burst of edges
+    rolls into a new interval instead of stopping the scope.
     A keyboard interrupt (Ctrl-C) ends the wait early too: the current
     interval is still stopped, read out and written before the function
     returns, so nothing captured is lost.
@@ -750,6 +778,7 @@ def monitor(
     number = 0
     seconds = float(settings.interval.to("s").magnitude)
     nearly_full = int(np.ceil(settings.readout_when_full * (capacity or settings.segments)))
+    snapshot_seconds = float(settings.snapshot_every.to("s").magnitude)
     previous_stop: Optional[datetime] = None
     interrupted = False
     while not interrupted and not stop() and (intervals is None or number < intervals):
@@ -758,6 +787,7 @@ def monitor(
         started = clock()
         dead_time = 0.0 if previous_stop is None else (started - previous_stop).total_seconds()
         waited = 0.0
+        since_snapshot = 0.0
         try:
             sleep(_ARM_DELAY)
             scope.trigger.force()
@@ -765,6 +795,10 @@ def monitor(
                 step = min(1.0, seconds - waited)
                 sleep(step)
                 waited += step
+                since_snapshot += step
+                if since_snapshot >= snapshot_seconds:
+                    scope.trigger.force()
+                    since_snapshot = 0.0
                 held = scope.history.available()
                 if held >= nearly_full:
                     report(f"interval {number}: the scope holds {held} acquisitions, reading out early")

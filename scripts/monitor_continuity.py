@@ -47,6 +47,7 @@ SETTINGS = ContinuitySettings(
     segments=10_000,                 # acquisitions the scope can hold per interval before it stops early
     interval=Q(60, "s"),             # how often the acquisitions are read out and saved ...
     readout_when_full=0.9,           # ... or sooner, once the scope holds this fraction of its segments
+    snapshot_every=Q(10, "s"),       # a forced acquisition this often: the contact state, even with no edge
     merge_within=Q(10, "us"),        # openings closer together than this are one bouncing dropout
 )
 # ─────────────────────────────────────────────────────────────────────────────

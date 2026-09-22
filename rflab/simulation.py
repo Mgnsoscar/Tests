@@ -168,6 +168,8 @@ class SimulatedBench:
         ]
         #: The simulated scope cannot trigger for this long after a record ends (re-arm time).
         self.blind_seconds = 1e-6
+        #: Seconds between the forced (snapshot) acquisitions of a run; the first is at the run start.
+        self.forced_spacing = 10.0
         #: Acquisitions the simulated scope's memory holds at most; ``ACQ:SEGM:MAX`` is clipped to it.
         self.scope_segment_capacity = 160_000
         #: The simulated scope's clock at the start of its first run; each run starts a minute later.
@@ -340,22 +342,19 @@ class SimulatedBench:
         runs = [i for i, command in enumerate(w) if command == "RUNS"]
         if not runs:
             return [], None
-        forced = "TRIG1:FORC" in w[runs[-1]:]
+        forced_count = w[runs[-1]:].count("TRIG1:FORC")
         window = _last_float(w, r"^TIM:RANG (\S+)$", 5e-5)
         reference = _last_float(w, r"^TIM:REF (\S+)$", 20.0) / 100
         post = window * (1 - reference)
         max_segments = self._scope_max_segments()
         slope = _last(w, r"^TRIG1:EDGE:SLOP (\S+)$") or "POS"
-        crossings = sorted(
-            [(a, True) for a, _ in self.contact_openings] + [(b, False) for _, b in self.contact_openings]
-        )
+        # the k-th forced acquisition of a run lands at k × forced_spacing seconds (the first at 0)
+        events: list[tuple[float, Optional[bool]]] = [(k * self.forced_spacing, None) for k in range(forced_count)]
+        events += [(a, True) for a, _ in self.contact_openings] + [(b, False) for _, b in self.contact_openings]
         triggers: list[float] = []
         armed_at = 0.0
-        if forced:
-            triggers.append(0.0)
-            armed_at = post + self.blind_seconds
-        for t, falling in crossings:
-            if (slope == "NEG" and not falling) or (slope == "POS" and falling):
+        for t, falling in sorted(events, key=lambda e: e[0]):
+            if falling is not None and ((slope == "NEG" and not falling) or (slope == "POS" and falling)):
                 continue
             if t < armed_at or len(triggers) >= max_segments:
                 continue

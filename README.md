@@ -137,8 +137,12 @@ dropout. The record analysis uses a hysteresis (open below 0.4 V, closed
 again only above 0.6 V by default), so a signal lingering at the threshold
 with noise on it is not a train of crossings. Do the hand test by breaking
 the contact, not by switching the supply off: a supply ramps down over
-milliseconds and only looks like a chattering contact. One acquisition is forced at the start of every interval so the
-contact state at that moment is on record. Three files are written under
+milliseconds and only looks like a chattering contact. One acquisition is
+forced at the start of every interval and every 10 s while it runs: a
+snapshot of the contact state, so a level that drifts across the threshold
+too slowly to trigger is still caught and dated to within that time (such a
+dropout is marked *approx*, with the window in its note). Three files are
+written under
 `results/(B) <DUT>/(B) Continuity/{date} (B) Continuity <test> ...`, flushed
 after every row: `acquisitions.csv` (one row per trigger: scope timestamp,
 the edge, the crossings in its record, min/max voltage — the raw evidence),
