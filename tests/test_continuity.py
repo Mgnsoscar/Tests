@@ -84,9 +84,29 @@ def test_read_interval_returns_every_acquisition_oldest_first_with_the_forced_on
     assert acquisitions[3].analysis.starts_open is True              # the rising edge's record starts open
     assert len(acquisitions[4].analysis.crossings) == 4              # the bounce: F R F R
     assert acquisitions[1].analysis.minimum == 0.0 and acquisitions[1].analysis.maximum == 1.0
-    # the history was walked from the oldest to the newest acquisition
-    selects = [c for c in bench.scope_backend.writes if c.startswith("CHAN1:WAV1:HIST:CURR ")]
+    # the history was entered again after the stop and walked from the oldest to the newest acquisition,
+    # waiting for the instrument after every selection
+    w = bench.scope_backend.writes
+    assert w.index("CHAN1:WAV1:HIST:STAT ON", w.index("STOP")) > w.index("STOP")
+    selects = [c for c in w if c.startswith("CHAN1:WAV1:HIST:CURR ")]
     assert selects == [f"CHAN1:WAV1:HIST:CURR {i}" for i in range(-4, 1)]
+    assert bench.scope_backend.queries.count("*OPC?") >= 6
+
+
+def test_read_interval_refuses_records_that_did_not_follow_the_selection(bench: SimulatedBench) -> None:
+    scope = bench.scope
+    configure(scope, SETTINGS)
+    run_once(bench)
+    backend = bench.scope_backend
+    original_write = backend.write
+
+    def ignore_selection(command: str) -> None:      # an instrument on which HIST:CURR does nothing
+        if not command.startswith("CHAN1:WAV1:HIST:CURR "):
+            original_write(command)
+
+    backend.write = ignore_selection  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="same timestamp"):
+        read_interval(scope, SETTINGS, 1)
 
 
 def test_memory_full_is_flagged(bench: SimulatedBench) -> None:

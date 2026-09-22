@@ -677,8 +677,10 @@ def read_interval(
     memory_full = count >= (capacity or settings.segments)
     acquisitions: list[Acquisition] = []
     ch = settings.channel
+    if count:
+        scope.history.enable(ch, True)           # a run leaves the history; enter it again for the readout
     for number, index in enumerate(range(-(count - 1), 1) if count else [], start=1):
-        scope.history.select(ch, index)
+        scope.history.select(ch, index)          # waits until the selection has taken effect
         stamp = scope.history.timestamp(ch)
         t, v = scope.waveform.get_data(ch)
         x = np.asarray(t.to("s").magnitude, dtype=np.float64)
@@ -687,6 +689,13 @@ def read_interval(
             stamp.relative + float(x[0]), stamp.relative + float(x[-1]),
             analyse_record(t, v, settings.threshold),
         ))
+    stamps = {(a.scope_date, a.scope_time, a.relative) for a in acquisitions}
+    if len(acquisitions) > 1 and len(stamps) == 1:
+        raise RuntimeError(
+            f"The scope holds {count} acquisitions but every one read back carries the same timestamp "
+            f"{acquisitions[0].scope_date} {acquisitions[0].scope_time}: selecting acquisitions in the "
+            "history had no effect, so the records are not the stored ones. Nothing was logged for this interval."
+        )
     return acquisitions, memory_full
 
 
@@ -743,6 +752,7 @@ def monitor(
             interrupted = True
             report("interrupted: reading out the current interval ...")
         scope.stop()
+        scope.wait_for_instrument()              # STOP is asynchronous too: the count is right once it has taken effect
         stopped = clock()
         acquisitions, memory_full = read_interval(scope, settings, number, capacity)
         for a in acquisitions:
