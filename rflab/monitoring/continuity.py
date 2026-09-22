@@ -33,10 +33,9 @@ have happened there is inferred and marked, so a duration is reported as
 *exact*, *approx* (an edge fell into the sub-microsecond blind time after a
 record, or the dropout spans a stop and was measured on the scope's absolute
 clock) or *at least*
-(the closing was never seen). At the start of every interval, and every
-`snapshot_every` while it runs, one acquisition is forced: a snapshot of the
-contact state, so a level that drifted across the threshold too slowly to
-trigger is still caught and dated to within that time.
+(the closing was never seen). At the start of every interval one acquisition
+is forced, so the contact state at that moment is on record even when nothing
+else triggers.
 
 How nothing is lost
 -------------------
@@ -122,10 +121,6 @@ class ContinuitySettings:
     #: Read out early when the scope already holds this fraction of its segment capacity,
     #: so a chattering contact rolls into a new interval instead of filling the memory.
     readout_when_full: float = 0.9
-    #: Force one acquisition this often while the scope runs: a snapshot of the contact
-    #: state, so a change too slow to trigger (a drifting level) is still caught and dated
-    #: to within this time.
-    snapshot_every: Quantity = Q(10, "s")
     #: Openings closer together than this are one bouncing dropout.
     merge_within: Quantity = Q(10, "us")
     #: Vertical scale, so 0 V and 1 V are both well inside the screen.
@@ -256,8 +251,9 @@ class Acquisition:
 
     @property
     def trigger(self) -> str:
-        """The edge seen at the trigger point; ``forced`` for a state snapshot (no crossing near the
-        trigger point), ``glitch`` for a trigger whose record shows only a crossing too short to change the state."""
+        """The edge seen at the trigger point; ``forced`` for the state snapshot at the interval start (no
+        crossing near the trigger point), ``glitch`` for a trigger whose record shows only a crossing too
+        short to change the state."""
         if self.analysis.trigger_edge != "none":
             return self.analysis.trigger_edge
         near = [t for t, _ in self.analysis.crossings if abs(t) < 1e-6]
@@ -809,10 +805,9 @@ def monitor(
     Every interval: single run, one forced acquisition (the contact state at
     the start), wait, stop, read the history, write every acquisition, every
     dropout that became final and the interval record, run again. During the
-    wait a snapshot acquisition is forced every `snapshot_every`, and the
-    scope's acquisition count is polled once a second: the interval ends
-    early once the memory is `readout_when_full` full, so a burst of edges
-    rolls into a new interval instead of stopping the scope.
+    wait the scope's acquisition count is polled once a second, and the
+    interval ends early once the memory is `readout_when_full` full, so a
+    burst of edges rolls into a new interval instead of stopping the scope.
     A keyboard interrupt (Ctrl-C) ends the wait early too: the current
     interval is still stopped, read out and written before the function
     returns, so nothing captured is lost.
@@ -821,7 +816,6 @@ def monitor(
     number = 0
     seconds = float(settings.interval.to("s").magnitude)
     nearly_full = int(np.ceil(settings.readout_when_full * (capacity or settings.segments)))
-    snapshot_seconds = float(settings.snapshot_every.to("s").magnitude)
     previous_stop: Optional[datetime] = None
     interrupted = False
     while not interrupted and not stop() and (intervals is None or number < intervals):
@@ -830,7 +824,6 @@ def monitor(
         started = clock()
         dead_time = 0.0 if previous_stop is None else (started - previous_stop).total_seconds()
         waited = 0.0
-        since_snapshot = 0.0
         try:
             sleep(_ARM_DELAY)
             scope.trigger.force()
@@ -838,10 +831,6 @@ def monitor(
                 step = min(1.0, seconds - waited)
                 sleep(step)
                 waited += step
-                since_snapshot += step
-                if since_snapshot >= snapshot_seconds:
-                    scope.trigger.force()
-                    since_snapshot = 0.0
                 held = scope.history.available()
                 if held >= nearly_full:
                     report(f"interval {number}: the scope holds {held} acquisitions, reading out early")

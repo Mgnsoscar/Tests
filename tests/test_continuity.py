@@ -299,13 +299,13 @@ def test_tracker_marks_edges_that_fell_into_the_blind_time() -> None:
     assert d2.certainty == "exact" and d2.duration == pytest.approx(0.5)
 
 
-def test_snapshot_catches_a_level_that_drifted_open_without_an_edge() -> None:
+def test_a_later_record_that_finds_the_contact_open_dates_the_opening_between_records() -> None:
     # the supply ramps down: the trigger fires at the threshold, the record ends still "closed" (inside the
-    # hysteresis band), nothing triggers afterwards, and 10 s later the forced snapshot finds the contact open
+    # hysteresis band), nothing triggers afterwards, and a record 10 s later finds the contact open
     tracker = DropoutTracker(SETTINGS)
-    a1 = acq(1, 1, -20.0, False, False)                                       # the snapshot at the interval start
+    a1 = acq(1, 1, -20.0, False, False)                                       # the forced one at the interval start
     a2 = acq(1, 2, -15.0, False, False, ((0.0, True), (2e-6, False)), "none")  # the ramp: noise, then in the band
-    a3 = acq(1, 3, -5.0, True, True)                                           # the next snapshot: open
+    a3 = acq(1, 3, -5.0, True, True)                                           # a glitch trigger while open
     a4 = acq(1, 4, 0.0, True, False, ((0.0, False),), "rising")                # the supply comes back
     assert a2.trigger == "glitch" and a3.trigger == "forced"
     noise, d = tracker.feed(1, [a1, a2, a3, a4], False)
@@ -314,31 +314,6 @@ def test_snapshot_catches_a_level_that_drifted_open_without_an_edge() -> None:
     assert d.duration == pytest.approx(0.0 - a2.record_end)
     assert d.note.startswith("opened between two records with no trigger in between, 10 s apart")
     assert "too slow to trigger" in d.note
-
-
-def test_monitor_forces_a_snapshot_every_snapshot_interval(tmp_path: Path, bench: SimulatedBench) -> None:
-    settings = ContinuitySettings(interval=Q(3, "s"), segments=100, snapshot_every=Q(1, "s"))
-    scope = bench.scope
-    configure(scope, settings)
-    log = ContinuityLog(tmp_path, "run").open({})
-    now = [datetime(2026, 9, 21, 8, 0, 0)]
-
-    def clock() -> datetime:
-        return now[0]
-
-    def sleep(seconds: float) -> None:
-        now[0] += timedelta(seconds=seconds)
-
-    lines: list[str] = []
-    total = monitor(scope, settings, log, intervals=1, clock=clock, sleep=sleep, report=lines.append)
-    assert bench.scope_backend.writes.count("TRIG1:FORC") == 4                # at the start, then 1 s, 2 s, 3 s
-    assert lines[-1].startswith("interval 1: 8 acquisition(s), 3 dropout(s) final, 3 in total")
-    assert total == 3                                                          # the snapshots agree with the state
-    rows = (tmp_path / "run acquisitions.csv").read_text(encoding="utf-8").splitlines()[1:]
-    assert [r.split(",")[5] for r in rows] == [
-        "forced", "falling", "falling", "rising", "falling", "forced", "forced", "forced",
-    ]
-    log.close()
 
 
 # -- the loop and the files ----------------------------------------------------

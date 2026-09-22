@@ -168,7 +168,7 @@ class SimulatedBench:
         ]
         #: The simulated scope cannot trigger for this long after a record ends (re-arm time).
         self.blind_seconds = 1e-6
-        #: Seconds between the forced (snapshot) acquisitions of a run; the first is at the run start.
+        #: Seconds between forced acquisitions of a run, if several are forced; the first is at the run start.
         self.forced_spacing = 10.0
         #: Acquisitions the simulated scope's memory holds at most; ``ACQ:SEGM:MAX`` is clipped to it.
         self.scope_segment_capacity = 160_000

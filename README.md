@@ -142,11 +142,8 @@ wrong state behind (a head or tail inside the band is marked `?` in the
 acquisitions file). Do the hand test by breaking
 the contact, not by switching the supply off: a supply ramps down over
 milliseconds and only looks like a chattering contact. One acquisition is
-forced at the start of every interval and every 10 s while it runs: a
-snapshot of the contact state, so a level that drifts across the threshold
-too slowly to trigger is still caught and dated to within that time (such a
-dropout is marked *approx*, with the window in its note). Three files are
-written under
+forced at the start of every interval so the contact state at that moment
+is on record. Three files are written under
 `results/(B) <DUT>/(B) Continuity/{date} (B) Continuity <test> ...`, flushed
 after every row: `acquisitions.csv` (one row per trigger: scope timestamp,
 the edge, the crossings in its record, min/max voltage — the raw evidence),
