@@ -147,16 +147,26 @@ class ContinuitySettings:
 class RecordAnalysis:
     """What one captured record says about the contact."""
 
-    #: Contact state at the first and the last sample.
+    #: Contact state at the start and the end of the record, decided by the level of its
+    #: head and tail (the first and last few percent of the samples), not by the nearest crossing.
     starts_open: bool
     ends_open: bool
-    #: Every threshold crossing: ``(time in the record in seconds, falling)``.
+    #: Every threshold crossing: ``(time in the record in seconds, falling)``, consistent with the
+    #: start and end states (noise crossings that contradict them are dropped).
     crossings: tuple[tuple[float, bool], ...]
     #: The edge at the trigger point: ``"falling"``, ``"rising"`` or ``"none"`` (a forced
     #: acquisition, or a glitch shorter than the guard around the trigger point).
     trigger_edge: str
     minimum: float
     maximum: float
+    #: The head or tail level sat inside the hysteresis band, so that state is the last
+    #: decisive sample's, not the level's: treat it as unsure.
+    start_uncertain: bool = False
+    end_uncertain: bool = False
+
+
+#: The share of a record's samples that make its head and its tail.
+_EDGE_SHARE = 0.05
 
 
 def analyse_record(
@@ -169,19 +179,51 @@ def analyse_record(
     With a hysteresis the contact opens below ``threshold − hysteresis`` and
     closes again only once the interval's minimum is above ``threshold +
     hysteresis``; in between, the state stays what it was.
+
+    The state at the start and at the end of the record is decided by the
+    mean level of its head and tail, not by the first or last crossing: a
+    signal ramping through the threshold with noise on it can end its
+    chatter on the wrong edge, but its tail is still clearly on one side.
+    Crossings at either end that contradict those states are dropped. A
+    head or tail inside the hysteresis band decides nothing; the sample
+    states are kept and the record is marked uncertain there.
     """
     t = np.asarray(time.to("s").magnitude, dtype=np.float64)
     v = np.asarray(voltage.to("V").magnitude, dtype=np.float64)
     low, high = (v.min(axis=1), v.max(axis=1)) if v.ndim == 2 else (v, v)
-    is_open = _open_states(low, float(threshold.to("V").magnitude), float(hysteresis.to("V").magnitude))
+    thr = float(threshold.to("V").magnitude)
+    h = float(hysteresis.to("V").magnitude)
+    is_open = _open_states(low, thr, h)
     changes = np.flatnonzero(is_open[1:] != is_open[:-1]) + 1
-    crossings = tuple((float(t[i]), bool(is_open[i])) for i in changes)
+    crossings = [(float(t[i]), bool(is_open[i])) for i in changes]
+
+    edge_samples = max(4, int(len(t) * _EDGE_SHARE))
+    starts_open, start_uncertain = _level_state(low[:edge_samples], thr, h, bool(is_open[0]))
+    ends_open, end_uncertain = _level_state(low[-edge_samples:], thr, h, bool(is_open[-1]))
+    while crossings and crossings[0][1] != (not starts_open):    # a first crossing must leave the start state
+        crossings.pop(0)
+    while crossings and crossings[-1][1] != ends_open:           # the last crossing must lead into the end state
+        crossings.pop()
+
     at_trigger = int(np.argmin(np.abs(t)))
     guard = 3
     before = bool(is_open[max(at_trigger - guard, 0)])
     after = bool(is_open[min(at_trigger + guard, len(t) - 1)])
     edge = "falling" if (not before and after) else "rising" if (before and not after) else "none"
-    return RecordAnalysis(bool(is_open[0]), bool(is_open[-1]), crossings, edge, float(low.min()), float(high.max()))
+    return RecordAnalysis(
+        starts_open, ends_open, tuple(crossings), edge, float(low.min()), float(high.max()),
+        start_uncertain, end_uncertain,
+    )
+
+
+def _level_state(samples: np.ndarray, threshold: float, hysteresis: float, fallback: bool) -> tuple[bool, bool]:
+    """``(open, uncertain)`` from the mean of the per-sample minima in a record's head or tail."""
+    level = float(samples.mean())
+    if level < threshold - hysteresis:
+        return True, False
+    if level > threshold + hysteresis:
+        return False, False
+    return fallback, True
 
 
 def _open_states(low: np.ndarray, threshold: float, hysteresis: float) -> np.ndarray:
@@ -606,10 +648,11 @@ class ContinuityLog:
     def write_acquisition(self, a: Acquisition) -> None:
         r = a.analysis
         crossings = " ".join(f"{'F' if falling else 'R'}{t * 1e6:+.3f}" for t, falling in r.crossings)
+        starts = ("open" if r.starts_open else "closed") + ("?" if r.start_uncertain else "")
+        ends = ("open" if r.ends_open else "closed") + ("?" if r.end_uncertain else "")
         self._row("acquisitions", [
             a.interval, a.number, a.scope_date, a.scope_time, f"{a.relative:.9f}", a.trigger,
-            "open" if r.starts_open else "closed", "open" if r.ends_open else "closed", crossings,
-            f"{r.minimum:.4f}", f"{r.maximum:.4f}",
+            starts, ends, crossings, f"{r.minimum:.4f}", f"{r.maximum:.4f}",
         ])
 
     def write_dropout(self, d: DropoutRecord) -> None:

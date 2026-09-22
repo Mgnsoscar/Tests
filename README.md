@@ -135,7 +135,11 @@ with the rising one that closes it — nothing is inferred from the order of
 triggers alone, and openings closer than 10 µs count as one bouncing
 dropout. The record analysis uses a hysteresis (open below 0.4 V, closed
 again only above 0.6 V by default), so a signal lingering at the threshold
-with noise on it is not a train of crossings. Do the hand test by breaking
+with noise on it is not a train of crossings, and the state at each end of
+a record is decided by the level of its head and tail rather than by the
+nearest crossing, so chatter ending on the wrong edge does not leave a
+wrong state behind (a head or tail inside the band is marked `?` in the
+acquisitions file). Do the hand test by breaking
 the contact, not by switching the supply off: a supply ramps down over
 milliseconds and only looks like a chattering contact. One acquisition is
 forced at the start of every interval and every 10 s while it runs: a

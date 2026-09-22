@@ -165,9 +165,33 @@ def test_analyse_record_hysteresis_ignores_noise_at_the_threshold() -> None:
     v = Q([1.0, 0.0, 0.55, 0.55, 0.7, 0.7, 0.0, 0.0, 0.7, 0.7, 0.7, 0.7], "V")
     r = analyse_record(t, v, Q(0.5, "V"), hysteresis=Q(100, "mV"))
     assert [(round(x * 1e6), f) for x, f in r.crossings] == [(-1, True), (2, False), (4, True), (6, False)]
-    # a record that starts inside the band takes its first state from the threshold alone
+    # a record that starts inside the band takes its first state from the threshold alone, and says it is unsure
     r = analyse_record(t, Q([0.45] + [0.45] * 11, "V"), Q(0.5, "V"), hysteresis=Q(100, "mV"))
     assert r.starts_open is True and r.crossings == ()
+    assert r.start_uncertain is True and r.end_uncertain is True
+
+
+def test_analyse_record_lets_the_tail_level_overrule_a_noise_crossing() -> None:
+    # a ramp down whose chatter ends on a rising edge: the tail is clearly low, so the record ends open
+    # and the trailing noise crossing is dropped, leaving a falling crossing as the last one
+    t = Q(np.linspace(0, 19e-6, 20), "s")
+    v = Q([0.9] * 8 + [0.3, 0.7, 0.3, 0.7, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3], "V")
+    r = analyse_record(t, v, Q(0.5, "V"))                                   # no hysteresis: every wiggle counts
+    assert r.ends_open is True and r.end_uncertain is False
+    assert r.crossings[-1][1] is True and len(r.crossings) == 5
+    # the same with a wiggle inside the tail: its mean level (0.4 V) still says open
+    v = Q([0.9] * 8 + [0.3] * 8 + [0.3, 0.3, 0.7, 0.3], "V")
+    r = analyse_record(t, v, Q(0.5, "V"))
+    assert r.ends_open is True and r.crossings[-1][1] is True and len(r.crossings) == 3
+    # a head whose first sample is a noise dip but whose level is high starts closed: the rising
+    # crossing that would leave an open start is dropped
+    v = Q([0.3, 0.7, 0.7, 0.7] + [0.9] * 16, "V")
+    r = analyse_record(t, v, Q(0.5, "V"))
+    assert r.starts_open is False and r.start_uncertain is False and r.crossings == ()
+    # a tail inside the hysteresis band decides nothing and is flagged
+    v = Q([0.9] * 10 + [0.45] * 10, "V")
+    r = analyse_record(t, v, Q(0.5, "V"), hysteresis=Q(100, "mV"))
+    assert r.end_uncertain is True and r.ends_open is False and r.crossings == ()
 
 
 # -- the timeline ----------------------------------------------------------------
@@ -346,6 +370,8 @@ def test_monitor_loop_writes_the_three_files_flushed(tmp_path: Path, bench: Simu
     assert len(rows) == 10 and [r[0] for r in rows] == ["1"] * 5 + ["2"] * 5
     assert [r[5] for r in rows[:5]] == ["forced", "falling", "falling", "rising", "falling"]
     assert rows[2][8].startswith("F+0.000") and rows[3][8].startswith("R+0.000")
+    assert [r[6] for r in rows[:5]] == ["closed", "closed", "closed", "open", "closed"]
+    assert [r[7] for r in rows[:5]] == ["closed", "closed", "open", "closed", "closed"]
     dropouts = (tmp_path / "run dropouts.csv").read_text(encoding="utf-8").splitlines()
     assert dropouts[2].startswith("Dropout,Interval,Scope date,Scope time,Relative [s],Duration [us],Duration is,")
     rows = [line.split(",") for line in dropouts[3:]]
