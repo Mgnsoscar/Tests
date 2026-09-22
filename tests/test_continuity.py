@@ -56,7 +56,7 @@ def test_configure_sets_either_edge_peak_detect_and_segmentation(bench: Simulate
     assert "SYST:DISP:UPD OFF" in w
     assert "CHAN1:COUP DC" in w                      # the 50 Ω input, so the node collapses in ns
     assert "CHAN1:SCAL 0.2" in w and "CHAN1:OFFS 0.5" in w
-    assert "CHAN1:WAV1:ARIT PDET" in w               # min/max per sample interval: no crossing escapes the record
+    assert "CHAN1:WAV1:ARIT OFF" in w and "CHAN1:WAV1:TYPE PDET" in w   # peak-detect decimation: no crossing escapes
     assert "TIM:RANG 5e-05" in w and "TIM:REF 20.0" in w
     assert "ACQ:SRAT 50000000.0" in w
     assert "ACQ:COUN 100" in w and "ACQ:SEGM:STAT ON" in w and "ACQ:SEGM:MAX 100" in w

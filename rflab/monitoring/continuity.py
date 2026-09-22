@@ -605,7 +605,8 @@ def configure(scope: RTO64, settings: ContinuitySettings) -> int:
     ch.set_bandwidth_limit("FULL")
     ch.set_scale(settings.scale)
     ch.set_offset(settings.closed_level / 2)     # centre the 0 V – closed_level swing on screen
-    ch.set_arithmetics("PEAK_DETECT")            # min and max per sample interval: no crossing escapes the record
+    ch.set_arithmetics("OFF")                    # no averaging or envelope across acquisitions
+    ch.set_decimation("PEAK_DETECT")             # min and max per sample interval: no crossing escapes the record
     scope.timebase.set_range(settings.window)
     scope.timebase.set_reference(20)
     scope.timebase.set_position(Q(0, "s"))

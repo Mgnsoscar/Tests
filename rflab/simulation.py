@@ -420,7 +420,7 @@ class SimulatedBench:
         window = _last_float(w, r"^TIM:RANG (\S+)$", 5e-5)
         reference = _last_float(w, r"^TIM:REF (\S+)$", 20.0) / 100
         rate = _last_float(w, r"^ACQ:SRAT (\S+)$", 2e8)
-        peak_detect = (_last(w, r"^CHAN\d:WAV1:ARIT (\S+)$") or "OFF") == "PDET"
+        peak_detect = (_last(w, r"^CHAN\d:WAV1:TYPE (\S+)$") or "SAMP") == "PDET"
         points = int(round(window * rate)) + 1
         if query.endswith("DATA:HEAD?"):
             return f"{_num(-window * reference)},{_num(window * (1 - reference))},{points},{2 if peak_detect else 1}"
