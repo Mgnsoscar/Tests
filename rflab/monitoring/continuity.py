@@ -30,8 +30,9 @@ count as one bouncing dropout. Where the scope could not see — its blind time
 after a record, the readout gap between intervals, a stop on full memory — the
 level before and after the blind spot is compared and any crossing that must
 have happened there is inferred and marked, so a duration is reported as
-*exact*, *approx* (an edge fell into a blind spot of a few µs, or the dropout
-spans a stop and was measured on the scope's absolute clock) or *at least*
+*exact*, *approx* (an edge fell into the sub-microsecond blind time after a
+record, or the dropout spans a stop and was measured on the scope's absolute
+clock) or *at least*
 (the closing was never seen). At the start of every interval one acquisition
 is forced, so the contact state at that moment is on record even when nothing
 else triggers.
@@ -39,7 +40,9 @@ else triggers.
 How nothing is lost
 -------------------
 :func:`monitor` runs in intervals: start a single run, wait `interval`, stop,
-read every stored acquisition, write and **flush** three files, restart:
+read every stored acquisition, write and **flush** three files, restart. An
+interval also ends early when the scope's memory is nearly full, so a
+chattering contact costs a readout gap, not lost edges:
 
 * the *acquisitions* file — one row per trigger with its timestamp, the edge
   that triggered, the crossings in its record and its extreme voltages: the raw
@@ -109,6 +112,9 @@ class ContinuitySettings:
     segments: int = 10_000
     #: How long the scope runs before the captured acquisitions are read out and saved.
     interval: Quantity = Q(60, "s")
+    #: Read out early when the scope already holds this fraction of its segment capacity,
+    #: so a chattering contact rolls into a new interval instead of filling the memory.
+    readout_when_full: float = 0.9
     #: Openings closer together than this are one bouncing dropout.
     merge_within: Quantity = Q(10, "us")
     #: Vertical scale, so 0 V and 1 V are both well inside the screen.
@@ -585,8 +591,13 @@ class ContinuityLog:
 # -- the scope -----------------------------------------------------------------
 
 
-def configure(scope: RTO64, settings: ContinuitySettings) -> None:
-    """Set the scope up for the monitor: channel, timebase, either-edge trigger, fast segmentation."""
+def configure(scope: RTO64, settings: ContinuitySettings) -> int:
+    """Set the scope up for the monitor: channel, timebase, either-edge trigger, fast segmentation.
+
+    Returns the number of acquisitions the scope will actually hold per
+    interval: `settings.segments`, or less if the instrument clipped it to
+    its memory at this record length. Pass it to :func:`monitor`.
+    """
     ch = scope.channel(settings.channel)
     scope.system.set_display_update(False)
     ch.enable(True)
@@ -605,12 +616,19 @@ def configure(scope: RTO64, settings: ContinuitySettings) -> None:
     scope.trigger.edge(f"CH{settings.channel}", settings.threshold, slope="EITHER", mode="NORMAL")
     scope.trigger.set_holdoff("OFF")             # the record after each trigger already covers a bounce
     scope.history.enable(settings.channel, True)
+    return min(settings.segments, scope.acquisition.get_max_segments())
 
 
-def read_interval(scope: RTO64, settings: ContinuitySettings, interval: int) -> tuple[list[Acquisition], bool]:
-    """Read every acquisition the stopped scope holds, oldest first: ``(acquisitions, memory was full)``."""
+def read_interval(
+    scope: RTO64, settings: ContinuitySettings, interval: int, capacity: Optional[int] = None
+) -> tuple[list[Acquisition], bool]:
+    """Read every acquisition the stopped scope holds, oldest first: ``(acquisitions, memory was full)``.
+
+    `capacity` is what :func:`configure` returned; without it the memory is
+    taken as full at `settings.segments` acquisitions.
+    """
     count = scope.history.available()
-    memory_full = count >= settings.segments
+    memory_full = count >= (capacity or settings.segments)
     acquisitions: list[Acquisition] = []
     ch = settings.channel
     for number, index in enumerate(range(-(count - 1), 1) if count else [], start=1):
@@ -635,19 +653,27 @@ def monitor(
     clock: Callable[[], datetime] = datetime.now,
     sleep: Callable[[float], None] = _time.sleep,
     report: Callable[[str], None] = print,
+    capacity: Optional[int] = None,
 ) -> int:
     """Run the monitor until `stop` returns true (or `intervals` are done); returns the dropout total.
 
+    `capacity` is what :func:`configure` returned: the acquisitions the scope
+    holds per interval, used to recognise a run that stopped on full memory.
+
     Every interval: single run, one forced acquisition (the contact state at
     the start), wait, stop, read the history, write every acquisition, every
-    dropout that became final and the interval record, run again. A keyboard
-    interrupt (Ctrl-C) ends the wait early: the current interval is still
-    stopped, read out and written before the function returns, so nothing
-    captured is lost.
+    dropout that became final and the interval record, run again. During the
+    wait the scope's acquisition count is polled once a second, and the
+    interval ends early once the memory is `readout_when_full` full, so a
+    burst of edges rolls into a new interval instead of stopping the scope.
+    A keyboard interrupt (Ctrl-C) ends the wait early too: the current
+    interval is still stopped, read out and written before the function
+    returns, so nothing captured is lost.
     """
     tracker = DropoutTracker(settings)
     number = 0
     seconds = float(settings.interval.to("s").magnitude)
+    nearly_full = int(np.ceil(settings.readout_when_full * (capacity or settings.segments)))
     previous_stop: Optional[datetime] = None
     interrupted = False
     while not interrupted and not stop() and (intervals is None or number < intervals):
@@ -663,12 +689,16 @@ def monitor(
                 step = min(1.0, seconds - waited)
                 sleep(step)
                 waited += step
+                held = scope.history.available()
+                if held >= nearly_full:
+                    report(f"interval {number}: the scope holds {held} acquisitions, reading out early")
+                    break
         except KeyboardInterrupt:
             interrupted = True
             report("interrupted: reading out the current interval ...")
         scope.stop()
         stopped = clock()
-        acquisitions, memory_full = read_interval(scope, settings, number)
+        acquisitions, memory_full = read_interval(scope, settings, number, capacity)
         for a in acquisitions:
             log.write_acquisition(a)
         dropouts = tracker.feed(number, acquisitions, memory_full)

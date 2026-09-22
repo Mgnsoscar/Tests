@@ -168,6 +168,8 @@ class SimulatedBench:
         ]
         #: The simulated scope cannot trigger for this long after a record ends (re-arm time).
         self.blind_seconds = 1e-6
+        #: Acquisitions the simulated scope's memory holds at most; ``ACQ:SEGM:MAX`` is clipped to it.
+        self.scope_segment_capacity = 160_000
         #: The simulated scope's clock at the start of its first run; each run starts a minute later.
         self.scope_epoch = datetime(2026, 9, 21, 8, 0, 0)
         self.scope, self.scope_backend = mock_instrument(RTO64, name="Oscilloscope", responses=self._scope)
@@ -342,7 +344,7 @@ class SimulatedBench:
         window = _last_float(w, r"^TIM:RANG (\S+)$", 5e-5)
         reference = _last_float(w, r"^TIM:REF (\S+)$", 20.0) / 100
         post = window * (1 - reference)
-        max_segments = int(_last_float(w, r"^ACQ:SEGM:MAX (\S+)$", 1e6))
+        max_segments = self._scope_max_segments()
         slope = _last(w, r"^TRIG1:EDGE:SLOP (\S+)$") or "POS"
         crossings = sorted(
             [(a, True) for a, _ in self.contact_openings] + [(b, False) for _, b in self.contact_openings]
@@ -360,6 +362,11 @@ class SimulatedBench:
             triggers.append(t)
             armed_at = t + post + self.blind_seconds
         return triggers, self.scope_epoch + timedelta(seconds=60 * (len(runs) - 1))
+
+    def _scope_max_segments(self) -> int:
+        """The fast-segmentation series size in effect: what was set, clipped to the memory."""
+        wanted = int(_last_float(self.scope_backend.writes, r"^ACQ:SEGM:MAX (\S+)$", 1e6))
+        return min(wanted, self.scope_segment_capacity)
 
     def _contact_record(self, trigger: float, t: np.ndarray, peak_detect: bool) -> np.ndarray:
         """The contact voltage around `trigger`: 1 V closed, 0 V open; min/max per sample interval for peak detect."""
@@ -395,6 +402,8 @@ class SimulatedBench:
         count = len(triggers)
         if query == "ACQ:AVA?":
             return str(count)
+        if query == "ACQ:SEGM:MAX?":
+            return str(self._scope_max_segments())
         index = int(_last_float(w, r"^CHAN\d:WAV1:HIST:CURR (\S+)$", 0.0))
         if query.endswith("HIST:CURR?"):
             return str(index)

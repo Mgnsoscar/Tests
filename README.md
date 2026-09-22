@@ -94,11 +94,19 @@ after every row: `acquisitions.csv` (one row per trigger: scope timestamp,
 the edge, the crossings in its record, min/max voltage — the raw evidence),
 `dropouts.csv` (one row per dropout: start on the scope clock, duration in
 µs, whether that duration is *exact*, *approx* — an edge fell into the scope's
-few-µs blind time after a record, or the dropout spans a readout stop and
-was measured on the scope's absolute clock — or *at least* — the closing was
+sub-microsecond blind time after a record, or the dropout spans a readout
+stop and was measured on the scope's absolute clock — or *at least* — the closing was
 never seen — the number of merged openings and a note), and `intervals.csv`
 (each interval's start and stop on the PC clock, the acquisition count, the
-readout dead time and whether the scope's memory filled). Ctrl-C stops after
+readout dead time and whether the scope's memory filled). The interval is a
+trade-off, not a limit: a longer one means fewer readout gaps, a shorter one
+less sitting unsaved in the scope; for a short test set it longer than the
+test and stop with Ctrl-C, which reads out the whole run. What bounds an
+interval is the event count: the scope holds `segments` acquisitions
+(10 000 by default; the script prints the capacity the instrument actually
+granted, which its memory may clip), and the script polls that count every
+second and reads out early once the memory is 90 % full, so a chattering
+contact costs a readout gap rather than lost edges. Ctrl-C stops after
 reading out the current interval. Before the chamber closes, pull the
 connector once by hand and check the dropouts file shows it.
 

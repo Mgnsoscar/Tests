@@ -44,7 +44,8 @@ SETTINGS = ContinuitySettings(
     window=Q(50, "us"),              # record kept around each edge, 20 % before it
     sample_rate=Q(50, "MHz"),        # 20 ns per point in that record (peak detect: nothing shorter is missed)
     segments=10_000,                 # acquisitions the scope can hold per interval before it stops early
-    interval=Q(60, "s"),             # how often the acquisitions are read out and saved
+    interval=Q(60, "s"),             # how often the acquisitions are read out and saved ...
+    readout_when_full=0.9,           # ... or sooner, once the scope holds this fraction of its segments
     merge_within=Q(10, "us"),        # openings closer together than this are one bouncing dropout
 )
 # ─────────────────────────────────────────────────────────────────────────────
@@ -66,7 +67,7 @@ def main() -> None:
     name = f"{started.date().isoformat()} (B) Continuity {TEST}"
     log = ContinuityLog(folder, name)
 
-    configure(scope, settings)
+    capacity = configure(scope, settings)
     scope.check_errors("Oscilloscope after configuration")
     scope_clock = scope.system.get_datetime()
     offset = (scope_clock - datetime.now()).total_seconds()
@@ -79,15 +80,19 @@ def main() -> None:
         "Instrument": scope.get_id(),
         "Channel": str(settings.channel),
         "Trigger": f"either edge through {settings.threshold:~}; contact open below that level",
-        "Record": f"{settings.window:~} at {settings.sample_rate:~}, peak detect, {settings.segments} segments",
+        "Record": f"{settings.window:~} at {settings.sample_rate:~}, peak detect",
+        "Segments": f"{capacity} acquisitions per interval ({settings.segments} requested)",
         "Interval": f"{settings.interval:~}",
         "Bounce": f"openings closer than {settings.merge_within:~} are one dropout",
     })
     print(f"logging to {log.dropouts_path}")
     print(f"scope clock is {offset:+.1f} s from the PC clock; timestamps in the files are scope time")
+    print(f"the scope holds {capacity} acquisitions per {settings.interval:~} interval before it stops early")
+    if capacity < settings.segments:
+        print(f"  NOTE: {settings.segments} were requested; the scope's memory holds {capacity} at this record length")
     print("monitoring — Ctrl-C stops after reading out the current interval")
     try:
-        total = monitor(scope, settings, log, intervals=intervals)
+        total = monitor(scope, settings, log, intervals=intervals, capacity=capacity)
     finally:
         log.close()
         scope.system.set_display_update(True)

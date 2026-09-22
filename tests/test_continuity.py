@@ -51,7 +51,7 @@ def run_once(bench: SimulatedBench) -> None:
 
 
 def test_configure_sets_either_edge_peak_detect_and_segmentation(bench: SimulatedBench) -> None:
-    configure(bench.scope, SETTINGS)
+    assert configure(bench.scope, SETTINGS) == 100
     w = bench.scope_backend.writes
     assert "SYST:DISP:UPD OFF" in w
     assert "CHAN1:COUP DC" in w                      # the 50 Ω input, so the node collapses in ns
@@ -92,6 +92,14 @@ def test_memory_full_is_flagged(bench: SimulatedBench) -> None:
     run_once(bench)
     acquisitions, memory_full = read_interval(bench.scope, ContinuitySettings(segments=50), 1)
     assert memory_full is True and len(acquisitions) == 50
+    # the instrument clips the series to its memory: configure reports that, and the flag follows it
+    bench.scope_backend.writes.clear()
+    bench.scope_segment_capacity = 40
+    capacity = configure(bench.scope, ContinuitySettings(segments=50))
+    assert capacity == 40
+    run_once(bench)
+    acquisitions, memory_full = read_interval(bench.scope, ContinuitySettings(segments=50), 1, capacity)
+    assert memory_full is True and len(acquisitions) == 40
 
 
 # -- one record ------------------------------------------------------------------
@@ -257,6 +265,29 @@ def test_monitor_loop_writes_the_three_files_flushed(tmp_path: Path, bench: Simu
     assert intervals[-1].startswith("2,2026-09-21T08:00:02.200,2026-09-21T08:00:04.400,5,")
     w = bench.scope_backend.writes
     assert w.count("RUNS") == 2 and w.count("TRIG1:FORC") == 2 and w.count("STOP") == 2
+    log.close()
+
+
+def test_monitor_reads_out_early_when_the_memory_is_nearly_full(tmp_path: Path, bench: SimulatedBench) -> None:
+    bench.contact_openings = [(0.001 * k, 0.001 * k + 2e-6) for k in range(1, 96)]   # 95 edges + the forced one
+    scope = bench.scope
+    capacity = configure(scope, SETTINGS)                                             # 100 segments: 90 is "nearly full"
+    log = ContinuityLog(tmp_path, "run").open({})
+    now = [datetime(2026, 9, 21, 8, 0, 0)]
+
+    def clock() -> datetime:
+        return now[0]
+
+    def sleep(seconds: float) -> None:
+        now[0] += timedelta(seconds=seconds)
+
+    lines: list[str] = []
+    monitor(scope, SETTINGS, log, intervals=1, clock=clock, sleep=sleep, report=lines.append, capacity=capacity)
+    assert lines[0] == "interval 1: the scope holds 96 acquisitions, reading out early"
+    assert lines[1].startswith("interval 1: 96 acquisition(s), 95 dropout(s) final")
+    intervals = (tmp_path / "run intervals.csv").read_text(encoding="utf-8").splitlines()
+    assert intervals[-1].startswith("1,2026-09-21T08:00:00.000,2026-09-21T08:00:01.200,96,0.000,no")  # not the 2 s
+    assert bench.scope_backend.queries.count("ACQ:AVA?") == 2                          # the poll, then the readout
     log.close()
 
 
