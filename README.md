@@ -133,7 +133,11 @@ analyses its record for the threshold crossings it holds, stitches the
 crossings of the interval into one timeline and pairs each falling crossing
 with the rising one that closes it — nothing is inferred from the order of
 triggers alone, and openings closer than 10 µs count as one bouncing
-dropout. One acquisition is forced at the start of every interval so the
+dropout. The record analysis uses a hysteresis (open below 0.4 V, closed
+again only above 0.6 V by default), so a signal lingering at the threshold
+with noise on it is not a train of crossings. Do the hand test by breaking
+the contact, not by switching the supply off: a supply ramps down over
+milliseconds and only looks like a chattering contact. One acquisition is forced at the start of every interval so the
 contact state at that moment is on record. Three files are written under
 `results/(B) <DUT>/(B) Continuity/{date} (B) Continuity <test> ...`, flushed
 after every row: `acquisitions.csv` (one row per trigger: scope timestamp,

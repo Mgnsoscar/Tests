@@ -104,6 +104,11 @@ class ContinuitySettings:
     closed_level: Quantity = Q(1.0, "V")
     #: The trigger level, and the level below which the contact counts as open.
     threshold: Quantity = Q(0.5, "V")
+    #: Hysteresis for the record analysis: the contact counts as open once the
+    #: voltage is below threshold − hysteresis and as closed again only above
+    #: threshold + hysteresis, so noise on a signal near the threshold is not
+    #: a train of crossings.
+    hysteresis: Quantity = Q(100, "mV")
     #: The record captured around each edge (20 % before it), and its sample rate.
     #: Peak detect keeps the min and max of every sample interval, so the rate
     #: only sets the time resolution of the crossings, not what is caught.
@@ -149,16 +154,21 @@ class RecordAnalysis:
     maximum: float
 
 
-def analyse_record(time: Quantity, voltage: Quantity, threshold: Quantity) -> RecordAnalysis:
+def analyse_record(
+    time: Quantity, voltage: Quantity, threshold: Quantity, hysteresis: Quantity = Q(0, "V")
+) -> RecordAnalysis:
     """Find the threshold crossings of a record; peak-detect records (min/max per sample) are supported.
 
     A sample interval counts as open when its minimum is below the threshold,
     so a crossing is placed at the first sample interval of the new state.
+    With a hysteresis the contact opens below ``threshold − hysteresis`` and
+    closes again only once the interval's minimum is above ``threshold +
+    hysteresis``; in between, the state stays what it was.
     """
     t = np.asarray(time.to("s").magnitude, dtype=np.float64)
     v = np.asarray(voltage.to("V").magnitude, dtype=np.float64)
     low, high = (v.min(axis=1), v.max(axis=1)) if v.ndim == 2 else (v, v)
-    is_open = low < float(threshold.to("V").magnitude)
+    is_open = _open_states(low, float(threshold.to("V").magnitude), float(hysteresis.to("V").magnitude))
     changes = np.flatnonzero(is_open[1:] != is_open[:-1]) + 1
     crossings = tuple((float(t[i]), bool(is_open[i])) for i in changes)
     at_trigger = int(np.argmin(np.abs(t)))
@@ -167,6 +177,17 @@ def analyse_record(time: Quantity, voltage: Quantity, threshold: Quantity) -> Re
     after = bool(is_open[min(at_trigger + guard, len(t) - 1)])
     edge = "falling" if (not before and after) else "rising" if (before and not after) else "none"
     return RecordAnalysis(bool(is_open[0]), bool(is_open[-1]), crossings, edge, float(low.min()), float(high.max()))
+
+
+def _open_states(low: np.ndarray, threshold: float, hysteresis: float) -> np.ndarray:
+    """Open/closed per sample from the per-sample minimum, with hysteresis around the threshold."""
+    if hysteresis <= 0:
+        return np.asarray(low < threshold)
+    decisive = np.where(low < threshold - hysteresis, 1, np.where(low > threshold + hysteresis, 0, -1))
+    if decisive[0] == -1:
+        decisive[0] = 1 if low[0] < threshold else 0        # the first sample decides by the threshold alone
+    last_decisive = np.maximum.accumulate(np.where(decisive >= 0, np.arange(len(low)), 0))
+    return np.asarray(decisive[last_decisive] == 1)
 
 
 @dataclass(frozen=True)
@@ -687,7 +708,7 @@ def read_interval(
         acquisitions.append(Acquisition(
             interval, number, stamp.date, stamp.time, stamp.relative,
             stamp.relative + float(x[0]), stamp.relative + float(x[-1]),
-            analyse_record(t, v, settings.threshold),
+            analyse_record(t, v, settings.threshold, settings.hysteresis),
         ))
     stamps = {(a.scope_date, a.scope_time, a.relative) for a in acquisitions}
     if len(acquisitions) > 1 and len(stamps) == 1:

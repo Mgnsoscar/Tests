@@ -152,6 +152,24 @@ def test_analyse_record_finds_crossings_and_the_trigger_edge() -> None:
     assert r.trigger_edge == "rising" and r.minimum == 0.0
 
 
+def test_analyse_record_hysteresis_ignores_noise_at_the_threshold() -> None:
+    # a slow ramp through the threshold with noise on it: the supply switching off, not a contact break
+    t = Q(np.linspace(-2e-6, 9e-6, 12), "s")
+    v = Q([0.9, 0.9, 0.52, 0.48, 0.51, 0.47, 0.53, 0.45, 0.3, 0.1, 0.0, 0.0], "V")
+    without = analyse_record(t, v, Q(0.5, "V"))
+    assert len(without.crossings) == 5                                     # every wiggle across 0.5 V
+    with_h = analyse_record(t, v, Q(0.5, "V"), hysteresis=Q(100, "mV"))
+    assert [(round(x * 1e6), f) for x, f in with_h.crossings] == [(6, True)]  # opens once, below 0.4 V
+    assert with_h.starts_open is False and with_h.ends_open is True
+    # a contact that closes again must come back above threshold + hysteresis
+    v = Q([1.0, 0.0, 0.55, 0.55, 0.7, 0.7, 0.0, 0.0, 0.7, 0.7, 0.7, 0.7], "V")
+    r = analyse_record(t, v, Q(0.5, "V"), hysteresis=Q(100, "mV"))
+    assert [(round(x * 1e6), f) for x, f in r.crossings] == [(-1, True), (2, False), (4, True), (6, False)]
+    # a record that starts inside the band takes its first state from the threshold alone
+    r = analyse_record(t, Q([0.45] + [0.45] * 11, "V"), Q(0.5, "V"), hysteresis=Q(100, "mV"))
+    assert r.starts_open is True and r.crossings == ()
+
+
 # -- the timeline ----------------------------------------------------------------
 
 

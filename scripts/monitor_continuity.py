@@ -40,7 +40,8 @@ TEST = "vibration"                   # goes into the file names: which environme
 SETTINGS = ContinuitySettings(
     channel=1,                       # scope channel the coax is on
     closed_level=Q(1.0, "V"),        # 2 V through 50 Ω + the 50 Ω input
-    threshold=Q(0.5, "V"),           # trigger level; below it the contact counts as open
+    threshold=Q(0.5, "V"),           # trigger level; below it the contact counts as open ...
+    hysteresis=Q(100, "mV"),         # ... open below 0.4 V, closed again only above 0.6 V (noise is not a crossing)
     window=Q(50, "us"),              # record kept around each edge, 20 % before it
     sample_rate=Q(50, "MHz"),        # 20 ns per point in that record (peak detect: nothing shorter is missed)
     segments=10_000,                 # acquisitions the scope can hold per interval before it stops early
@@ -80,7 +81,8 @@ def main() -> None:
         "Scope clock minus PC clock [s]": f"{offset:.1f}",
         "Instrument": scope.get_id(),
         "Channel": str(settings.channel),
-        "Trigger": f"either edge through {settings.threshold:~}; contact open below that level",
+        "Trigger": f"either edge through {settings.threshold:~}; contact open below that level, "
+                   f"hysteresis {settings.hysteresis:~} in the record analysis",
         "Record": f"{settings.window:~} at {settings.sample_rate:~}, peak detect",
         "Scope": setup.describe(),
         "Interval": f"{settings.interval:~}",
