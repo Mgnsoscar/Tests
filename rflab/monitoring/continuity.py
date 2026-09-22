@@ -80,6 +80,7 @@ __all__ = [
     "IntervalRecord",
     "ContinuityLog",
     "DropoutTracker",
+    "ScopeSetup",
     "configure",
     "analyse_record",
     "read_interval",
@@ -591,12 +592,42 @@ class ContinuityLog:
 # -- the scope -----------------------------------------------------------------
 
 
-def configure(scope: RTO64, settings: ContinuitySettings) -> int:
+@dataclass(frozen=True)
+class ScopeSetup:
+    """What the scope reports after :func:`configure`: the settings as the instrument took them."""
+
+    requested_segments: int
+    #: ``ACQ:SEGM:MAX?`` after the setup, or ``None`` when the answer was not a
+    #: valid series size (the command's range starts at 2), so the capacity is unknown.
+    granted_segments: Optional[int]
+    #: The raw answer, for the log.
+    segments_answer: str
+    record_length: int
+    sample_rate: Quantity
+
+    @property
+    def capacity(self) -> int:
+        """Acquisitions per interval to plan with: what was granted, else what was requested."""
+        return self.granted_segments if self.granted_segments is not None else self.requested_segments
+
+    def describe(self) -> str:
+        rate = self.sample_rate.to("MHz").magnitude
+        record = f"record {self.record_length} points at {rate:g} MSa/s"
+        if self.granted_segments is None:
+            return (f"{record}; the scope answered {self.segments_answer!r} to ACQ:SEGM:MAX?, which is not a "
+                    f"series size — capacity unknown, planning with the requested {self.requested_segments}")
+        if self.granted_segments < self.requested_segments:
+            return (f"{record}; the scope holds {self.granted_segments} acquisitions per interval "
+                    f"({self.requested_segments} requested; its memory holds no more at this record length)")
+        return f"{record}; the scope holds {self.granted_segments} acquisitions per interval"
+
+
+def configure(scope: RTO64, settings: ContinuitySettings) -> ScopeSetup:
     """Set the scope up for the monitor: channel, timebase, either-edge trigger, fast segmentation.
 
-    Returns the number of acquisitions the scope will actually hold per
-    interval: `settings.segments`, or less if the instrument clipped it to
-    its memory at this record length. Pass it to :func:`monitor`.
+    Waits for the instrument to apply the settings, then reads back the
+    segment capacity, record length and sample rate; pass ``.capacity`` to
+    :func:`monitor`.
     """
     ch = scope.channel(settings.channel)
     scope.system.set_display_update(False)
@@ -617,7 +648,21 @@ def configure(scope: RTO64, settings: ContinuitySettings) -> int:
     scope.trigger.edge(f"CH{settings.channel}", settings.threshold, slope="EITHER", mode="NORMAL")
     scope.trigger.set_holdoff("OFF")             # the record after each trigger already covers a bounce
     scope.history.enable(settings.channel, True)
-    return min(settings.segments, scope.acquisition.get_max_segments())
+    scope.wait_for_instrument()                  # the settings are asynchronous: let them apply before reading back
+    answer = scope.query("ACQ:SEGM:MAX?").strip()
+    try:
+        granted: Optional[int] = int(round(float(answer)))
+    except ValueError:
+        granted = None
+    if granted is not None and granted < 2:
+        granted = None
+    return ScopeSetup(
+        settings.segments,
+        None if granted is None else min(settings.segments, granted),
+        answer,
+        scope.acquisition.get_record_length(),
+        scope.acquisition.get_sample_rate(),
+    )
 
 
 def read_interval(

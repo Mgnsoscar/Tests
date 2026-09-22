@@ -67,8 +67,9 @@ def main() -> None:
     name = f"{started.date().isoformat()} (B) Continuity {TEST}"
     log = ContinuityLog(folder, name)
 
-    capacity = configure(scope, settings)
+    setup = configure(scope, settings)
     scope.check_errors("Oscilloscope after configuration")
+    capacity = setup.capacity
     scope_clock = scope.system.get_datetime()
     offset = (scope_clock - datetime.now()).total_seconds()
     log.open({
@@ -81,15 +82,15 @@ def main() -> None:
         "Channel": str(settings.channel),
         "Trigger": f"either edge through {settings.threshold:~}; contact open below that level",
         "Record": f"{settings.window:~} at {settings.sample_rate:~}, peak detect",
-        "Segments": f"{capacity} acquisitions per interval ({settings.segments} requested)",
+        "Scope": setup.describe(),
         "Interval": f"{settings.interval:~}",
         "Bounce": f"openings closer than {settings.merge_within:~} are one dropout",
     })
     print(f"logging to {log.dropouts_path}")
     print(f"scope clock is {offset:+.1f} s from the PC clock; timestamps in the files are scope time")
-    print(f"the scope holds {capacity} acquisitions per {settings.interval:~} interval before it stops early")
-    if capacity < settings.segments:
-        print(f"  NOTE: {settings.segments} were requested; the scope's memory holds {capacity} at this record length")
+    print(setup.describe())
+    if setup.granted_segments is None:
+        print("  NOTE: check the scope's fast-segmentation dialog for the maximum it allows at this record length")
     print("monitoring — Ctrl-C stops after reading out the current interval")
     try:
         total = monitor(scope, settings, log, intervals=intervals, capacity=capacity)

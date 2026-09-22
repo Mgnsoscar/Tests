@@ -51,7 +51,10 @@ def run_once(bench: SimulatedBench) -> None:
 
 
 def test_configure_sets_either_edge_peak_detect_and_segmentation(bench: SimulatedBench) -> None:
-    assert configure(bench.scope, SETTINGS) == 100
+    setup = configure(bench.scope, SETTINGS)
+    assert setup.capacity == 100 and setup.granted_segments == 100
+    assert setup.record_length == 2501 and setup.sample_rate.to("MHz").magnitude == 50
+    assert setup.describe() == "record 2501 points at 50 MSa/s; the scope holds 100 acquisitions per interval"
     w = bench.scope_backend.writes
     assert "SYST:DISP:UPD OFF" in w
     assert "CHAN1:COUP DC" in w                      # the 50 Ω input, so the node collapses in ns
@@ -95,11 +98,19 @@ def test_memory_full_is_flagged(bench: SimulatedBench) -> None:
     # the instrument clips the series to its memory: configure reports that, and the flag follows it
     bench.scope_backend.writes.clear()
     bench.scope_segment_capacity = 40
-    capacity = configure(bench.scope, ContinuitySettings(segments=50))
-    assert capacity == 40
+    setup = configure(bench.scope, ContinuitySettings(segments=50))
+    assert setup.capacity == 40 and "50 requested" in setup.describe()
     run_once(bench)
-    acquisitions, memory_full = read_interval(bench.scope, ContinuitySettings(segments=50), 1, capacity)
+    acquisitions, memory_full = read_interval(bench.scope, ContinuitySettings(segments=50), 1, setup.capacity)
     assert memory_full is True and len(acquisitions) == 40
+
+
+def test_configure_treats_a_nonsense_segment_readback_as_unknown(bench: SimulatedBench) -> None:
+    bench.scope_segment_capacity = 1                    # the instrument answers 1: below the command's own range
+    setup = configure(bench.scope, ContinuitySettings(segments=150_000))
+    assert setup.granted_segments is None and setup.capacity == 150_000
+    assert setup.segments_answer == "1" and "capacity unknown" in setup.describe()
+    assert "*OPC?" in bench.scope_backend.queries      # the settings were allowed to apply before the readback
 
 
 # -- one record ------------------------------------------------------------------
@@ -271,7 +282,7 @@ def test_monitor_loop_writes_the_three_files_flushed(tmp_path: Path, bench: Simu
 def test_monitor_reads_out_early_when_the_memory_is_nearly_full(tmp_path: Path, bench: SimulatedBench) -> None:
     bench.contact_openings = [(0.001 * k, 0.001 * k + 2e-6) for k in range(1, 96)]   # 95 edges + the forced one
     scope = bench.scope
-    capacity = configure(scope, SETTINGS)                                             # 100 segments: 90 is "nearly full"
+    capacity = configure(scope, SETTINGS).capacity                                    # 100 segments: 90 is "nearly full"
     log = ContinuityLog(tmp_path, "run").open({})
     now = [datetime(2026, 9, 21, 8, 0, 0)]
 

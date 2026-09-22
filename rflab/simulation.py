@@ -404,6 +404,11 @@ class SimulatedBench:
             return str(count)
         if query == "ACQ:SEGM:MAX?":
             return str(self._scope_max_segments())
+        if query == "ACQ:SRAT?":
+            return _num(_last_float(w, r"^ACQ:SRAT (\S+)$", 2e8))
+        if query == "ACQ:POIN?":
+            window = _last_float(w, r"^TIM:RANG (\S+)$", 5e-5)
+            return str(int(round(window * _last_float(w, r"^ACQ:SRAT (\S+)$", 2e8))) + 1)
         index = int(_last_float(w, r"^CHAN\d:WAV1:HIST:CURR (\S+)$", 0.0))
         if query.endswith("HIST:CURR?"):
             return str(index)
