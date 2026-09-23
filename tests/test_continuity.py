@@ -316,6 +316,78 @@ def test_a_later_record_that_finds_the_contact_open_dates_the_opening_between_re
     assert "too slow to trigger" in d.note
 
 
+# -- the supply channel ---------------------------------------------------------
+
+SUPPLY = ContinuitySettings(interval=Q(3, "s"), segments=100, supply_channel=2)
+
+
+def test_configure_sets_up_the_supply_channel_on_the_high_impedance_input(bench: SimulatedBench) -> None:
+    configure(bench.scope, SUPPLY)
+    w = bench.scope_backend.writes
+    assert "CHAN2:STAT ON" in w and "CHAN2:COUP DCL" in w              # 1 MΩ: must not load the antenna body node
+    assert "CHAN2:SCAL 0.5" in w and "CHAN2:OFFS 1.0" in w
+    assert "CHAN2:WAV1:TYPE PDET" in w and "CHAN2:WAV1:HIST:STAT ON" in w
+    assert "TRIG1:SOUR CHAN1" in w                                     # the coax still triggers
+    with pytest.raises(ValueError):
+        configure(bench.scope, ContinuitySettings(supply_channel=1))
+
+
+def test_supply_channel_tells_antenna_dropouts_from_supply_cable_dropouts(bench: SimulatedBench) -> None:
+    bench.supply_openings = [(2.0, 2.0 + 50e-6)]                        # the supply cable breaks for 50 µs
+    scope = bench.scope
+    configure(scope, SUPPLY)
+    run_once(bench)
+    acquisitions, _ = read_interval(scope, SUPPLY, 1)
+    # the coax sees the supply break as a dropout like any other (both its edges trigger, it outlasts the
+    # record); the body wire tells it apart
+    assert [a.trigger for a in acquisitions] == [
+        "forced", "falling", "falling", "rising", "falling", "falling", "rising",
+    ]
+    supply = [(a.supply.minimum, a.supply.maximum) for a in acquisitions if a.supply is not None]
+    assert len(supply) == 7
+    assert supply[0] == (1.0, 1.0)
+    assert supply[1] == (1.0, 2.0) and supply[2] == (1.0, 2.0)          # antenna open: the body rises to 2 V
+    assert supply[5] == (0.0, 1.0) and supply[6] == (0.0, 1.0)          # supply gone: the body drops to 0 V
+    tracker = DropoutTracker(SUPPLY)
+    dropouts = tracker.feed(1, acquisitions, False)
+    assert [d.cause for d in dropouts] == ["antenna", "antenna", "antenna", "supply"]
+    assert [d.supply_minimum for d in dropouts] == [1.0, 1.0, 1.0, 0.0]
+    assert dropouts[3].duration * 1e6 == pytest.approx(50.0, abs=0.05)
+    assert (tracker.count, tracker.antenna_count, tracker.supply_count) == (4, 3, 1)
+    # without a supply channel nothing is attributed
+    bare = [Acquisition(a.interval, a.number, a.scope_date, a.scope_time, a.relative, a.record_start,
+                        a.record_end, a.analysis) for a in acquisitions]
+    plain = DropoutTracker(SETTINGS).feed(1, bare, False)
+    assert all(d.cause == "" and np.isnan(d.supply_minimum) for d in plain)
+
+
+def test_monitor_reports_and_logs_the_cause(tmp_path: Path, bench: SimulatedBench) -> None:
+    bench.supply_openings = [(2.0, 2.0 + 50e-6)]
+    scope = bench.scope
+    configure(scope, SUPPLY)
+    log = ContinuityLog(tmp_path, "run").open({})
+    now = [datetime(2026, 9, 21, 8, 0, 0)]
+
+    def clock() -> datetime:
+        return now[0]
+
+    def sleep(seconds: float) -> None:
+        now[0] += timedelta(seconds=seconds)
+
+    lines: list[str] = []
+    monitor(scope, SUPPLY, log, intervals=1, clock=clock, sleep=sleep, report=lines.append)
+    assert lines[-1] == "interval 1: 7 acquisition(s), 4 dropout(s) final, 4 in total (3 antenna, 1 supply cable)"
+    header, *rows = (tmp_path / "run dropouts.csv").read_text(encoding="utf-8").splitlines()
+    assert header.endswith("Minimum [V],Cause,Supply min [V],Note")
+    assert [r.split(",")[9:11] for r in rows] == [
+        ["antenna", "1.0000"], ["antenna", "1.0000"], ["antenna", "1.0000"], ["supply", "0.0000"],
+    ]
+    header, *rows = (tmp_path / "run acquisitions.csv").read_text(encoding="utf-8").splitlines()
+    assert header.endswith("Maximum [V],Supply min [V],Supply max [V]")
+    assert rows[1].split(",")[-2:] == ["1.0000", "2.0000"] and rows[-1].split(",")[-2:] == ["0.0000", "1.0000"]
+    log.close()
+
+
 # -- the loop and the files ----------------------------------------------------
 
 
@@ -412,8 +484,8 @@ def test_log_appends_to_existing_files_without_repeating_headers(tmp_path: Path)
     text = (tmp_path / "run dropouts.csv").read_text(encoding="utf-8")
     assert text.count("# DUT: A") == 1 and text.count("Dropout,Interval") == 1
     assert text.splitlines()[-2:] == [
-        "1,1,2026-09-21,08:00:00.000000,0.000000000,2.500,exact,1,0.0100,",
-        "2,2,2026-09-21,08:01:00.000000,-0.500000000,40.000,at least,2,0.0000,x",
+        "1,1,2026-09-21,08:00:00.000000,0.000000000,2.500,exact,1,0.0100,,,",
+        "2,2,2026-09-21,08:01:00.000000,-0.500000000,40.000,at least,2,0.0000,,,x",
     ]
 
 

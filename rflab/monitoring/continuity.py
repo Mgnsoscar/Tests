@@ -8,6 +8,16 @@ antenna body, through the contact under test, down the coax into the scope's
 the scope side collapses to 0 V within nanoseconds. Contact open = voltage
 below the threshold.
 
+Which side opened
+-----------------
+A dropout on the coax can be the antenna's own wiring or the cable that
+supplies the antenna body. A second scope channel on the antenna body (a
+wire to a 1 MΩ input) tells them apart: with current flowing it sits at 1 V;
+when the antenna opens it rises to the full supply voltage, because nothing
+draws current any more; when the supply cable breaks it falls to 0 V. Every
+dropout is attributed from that channel's records: *antenna* when the supply
+stayed on the body, *supply* when it was gone.
+
 How the scope catches every edge
 --------------------------------
 The scope triggers on **either** edge through the threshold in NORMAL mode, so
@@ -74,6 +84,8 @@ from labkit.units import Quantity, quantity as Q
 __all__ = [
     "ContinuitySettings",
     "RecordAnalysis",
+    "SupplyAnalysis",
+    "analyse_supply",
     "Acquisition",
     "Crossing",
     "DropoutRecord",
@@ -125,6 +137,18 @@ class ContinuitySettings:
     merge_within: Quantity = Q(10, "us")
     #: Vertical scale, so 0 V and 1 V are both well inside the screen.
     scale: Quantity = Q(200, "mV")
+    #: A second scope channel wired to the antenna body itself (the supply side of the
+    #: contact), on the 1 MΩ input so it does not load the node, or ``None``. With current
+    #: flowing it sits at `closed_level`; when the antenna's own wiring opens it rises to
+    #: the supply voltage (nothing draws current any more); when the supply cable breaks
+    #: it drops to 0 V. So it says which side of the contact a dropout is on.
+    supply_channel: Optional[int] = None
+    #: Below this on the supply channel during a dropout, the supply was gone: the cause is
+    #: the supply cable, not the antenna.
+    supply_threshold: Quantity = Q(0.5, "V")
+    #: The supply voltage, and the supply channel's scale: its 0 – 2 V swing on screen.
+    supply_level: Quantity = Q(2.0, "V")
+    supply_scale: Quantity = Q(500, "mV")
 
     @property
     def pre_trigger(self) -> Quantity:
@@ -233,6 +257,19 @@ def _open_states(low: np.ndarray, threshold: float, hysteresis: float) -> np.nda
 
 
 @dataclass(frozen=True)
+class SupplyAnalysis:
+    """What the supply channel's record of the same acquisition shows: its extreme voltages."""
+
+    minimum: float
+    maximum: float
+
+
+def analyse_supply(voltage: Quantity) -> SupplyAnalysis:
+    v = np.asarray(voltage.to("V").magnitude, dtype=np.float64)
+    return SupplyAnalysis(float(v.min()), float(v.max()))
+
+
+@dataclass(frozen=True)
 class Acquisition:
     """One stored acquisition of an interval, with its record analysed."""
 
@@ -248,6 +285,8 @@ class Acquisition:
     record_start: float
     record_end: float
     analysis: RecordAnalysis
+    #: The supply channel's record, when one is monitored.
+    supply: Optional[SupplyAnalysis] = None
 
     @property
     def trigger(self) -> str:
@@ -327,6 +366,12 @@ class DropoutRecord:
     openings: int
     minimum: float
     note: str
+    #: ``antenna`` (the supply stayed on the antenna body: the antenna's own wiring opened),
+    #: ``supply`` (the supply was gone too: the supply cable), ``unknown`` (no supply record
+    #: overlapped the dropout) or ``""`` when no supply channel is monitored.
+    cause: str = ""
+    #: The lowest supply-channel voltage in the records overlapping the dropout.
+    supply_minimum: float = float("nan")
 
 
 @dataclass(frozen=True)
@@ -365,6 +410,7 @@ class _Dropout:
     open_until: float = 0.0
     open_until_interval: int = 0
     minimum: float = float("inf")
+    supply_minimum: float = float("inf")
     notes: list[str] = field(default_factory=list)
 
 
@@ -373,8 +419,12 @@ class DropoutTracker:
 
     def __init__(self, settings: ContinuitySettings) -> None:
         self.merge_within = float(settings.merge_within.to("s").magnitude)
-        #: Dropouts opened so far.
+        self.supply_monitored = settings.supply_channel is not None
+        self.supply_threshold = float(settings.supply_threshold.to("V").magnitude)
+        #: Dropouts opened so far, and of the final ones, how many were the antenna's and the supply cable's.
         self.count = 0
+        self.antenna_count = 0
+        self.supply_count = 0
         self._pending: Optional[_Dropout] = None
         self._memory_full_before = False
         #: Per interval: the newest acquisition's trigger time on the scope's absolute clock, if it parsed.
@@ -478,9 +528,23 @@ class DropoutTracker:
         for a in acquisitions:
             if a.record_end >= span_start and a.record_start <= span_end:
                 d.minimum = min(d.minimum, a.analysis.minimum)
+                if a.supply is not None:
+                    d.supply_minimum = min(d.supply_minimum, a.supply.minimum)
+
+    def _cause(self, d: _Dropout) -> str:
+        if not self.supply_monitored:
+            return ""
+        if np.isinf(d.supply_minimum):
+            return "unknown"
+        if d.supply_minimum < self.supply_threshold:
+            self.supply_count += 1
+            return "supply"
+        self.antenna_count += 1
+        return "antenna"
 
     def _finish(self, d: _Dropout) -> DropoutRecord:
         duration, certainty = self._duration(d)
+        cause = self._cause(d)
         if d.end_inferred:
             d.notes.append(_inferred_note("closed", d.end_window))
         acq = d.start_acquisition
@@ -490,9 +554,10 @@ class DropoutTracker:
             scope_time = acq.scope_time
             d.notes.append(f"opening at {offset * 1e6:+.3f} us from that acquisition's timestamp")
         minimum = float("nan") if np.isinf(d.minimum) else d.minimum
+        supply_minimum = float("nan") if np.isinf(d.supply_minimum) else d.supply_minimum
         return DropoutRecord(
             d.number, d.interval, acq.scope_date, scope_time, d.start, duration, certainty,
-            d.openings, minimum, "; ".join(d.notes),
+            d.openings, minimum, "; ".join(d.notes), cause, supply_minimum,
         )
 
     def _absolute(self, interval: int, time: float) -> Optional[float]:
@@ -590,10 +655,11 @@ _COLUMNS = {
     "acquisitions": [
         "Interval", "Acquisition", "Scope date", "Scope time", "Relative [s]", "Trigger",
         "Starts", "Ends", "Crossings [us from trigger]", "Minimum [V]", "Maximum [V]",
+        "Supply min [V]", "Supply max [V]",
     ],
     "dropouts": [
         "Dropout", "Interval", "Scope date", "Scope time", "Relative [s]", "Duration [us]",
-        "Duration is", "Openings", "Minimum [V]", "Note",
+        "Duration is", "Openings", "Minimum [V]", "Cause", "Supply min [V]", "Note",
     ],
     "intervals": [
         "Interval", "Started (PC)", "Stopped (PC)", "Acquisitions", "Readout dead time [s]", "Memory full",
@@ -646,15 +712,17 @@ class ContinuityLog:
         crossings = " ".join(f"{'F' if falling else 'R'}{t * 1e6:+.3f}" for t, falling in r.crossings)
         starts = ("open" if r.starts_open else "closed") + ("?" if r.start_uncertain else "")
         ends = ("open" if r.ends_open else "closed") + ("?" if r.end_uncertain else "")
+        supply = ["", ""] if a.supply is None else [f"{a.supply.minimum:.4f}", f"{a.supply.maximum:.4f}"]
         self._row("acquisitions", [
             a.interval, a.number, a.scope_date, a.scope_time, f"{a.relative:.9f}", a.trigger,
-            starts, ends, crossings, f"{r.minimum:.4f}", f"{r.maximum:.4f}",
+            starts, ends, crossings, f"{r.minimum:.4f}", f"{r.maximum:.4f}", *supply,
         ])
 
     def write_dropout(self, d: DropoutRecord) -> None:
         self._row("dropouts", [
             d.number, d.interval, d.scope_date, d.scope_time, f"{d.relative:.9f}", f"{d.duration * 1e6:.3f}",
-            d.certainty, d.openings, "" if np.isnan(d.minimum) else f"{d.minimum:.4f}", d.note,
+            d.certainty, d.openings, "" if np.isnan(d.minimum) else f"{d.minimum:.4f}",
+            d.cause, "" if np.isnan(d.supply_minimum) else f"{d.supply_minimum:.4f}", d.note,
         ])
 
     def write_interval(self, record: IntervalRecord) -> None:
@@ -725,6 +793,17 @@ def configure(scope: RTO64, settings: ContinuitySettings) -> ScopeSetup:
     ch.set_offset(settings.closed_level / 2)     # centre the 0 V – closed_level swing on screen
     ch.set_arithmetics("OFF")                    # no averaging or envelope across acquisitions
     ch.set_decimation("PEAK_DETECT")             # min and max per sample interval: no crossing escapes the record
+    if settings.supply_channel is not None:
+        if settings.supply_channel == settings.channel:
+            raise ValueError("The supply channel must differ from the contact channel.")
+        sc = scope.channel(settings.supply_channel)
+        sc.enable(True)
+        sc.set_coupling("DC_1M")                 # high impedance: must not load the antenna body node
+        sc.set_bandwidth_limit("FULL")
+        sc.set_scale(settings.supply_scale)
+        sc.set_offset(settings.supply_level / 2)  # centre the 0 V – supply swing on screen
+        sc.set_arithmetics("OFF")
+        sc.set_decimation("PEAK_DETECT")
     scope.timebase.set_range(settings.window)
     scope.timebase.set_reference(20)
     scope.timebase.set_position(Q(0, "s"))
@@ -735,6 +814,8 @@ def configure(scope: RTO64, settings: ContinuitySettings) -> ScopeSetup:
     scope.trigger.edge(f"CH{settings.channel}", settings.threshold, slope="EITHER", mode="NORMAL")
     scope.trigger.set_holdoff("OFF")             # the record after each trigger already covers a bounce
     scope.history.enable(settings.channel, True)
+    if settings.supply_channel is not None:
+        scope.history.enable(settings.supply_channel, True)
     scope.wait_for_instrument()                  # the settings are asynchronous: let them apply before reading back
     answer = scope.query("ACQ:SEGM:MAX?").strip()
     try:
@@ -764,17 +845,24 @@ def read_interval(
     memory_full = count >= (capacity or settings.segments)
     acquisitions: list[Acquisition] = []
     ch = settings.channel
+    sc = settings.supply_channel
     if count:
         scope.history.enable(ch, True)           # a run leaves the history; enter it again for the readout
+        if sc is not None:
+            scope.history.enable(sc, True)
     for number, index in enumerate(range(-(count - 1), 1) if count else [], start=1):
         scope.history.select(ch, index)          # waits until the selection has taken effect
         stamp = scope.history.timestamp(ch)
         t, v = scope.waveform.get_data(ch)
+        supply = None
+        if sc is not None:
+            scope.history.select(sc, index)      # the same acquisition on the supply channel
+            supply = analyse_supply(scope.waveform.get_data(sc)[1])
         x = np.asarray(t.to("s").magnitude, dtype=np.float64)
         acquisitions.append(Acquisition(
             interval, number, stamp.date, stamp.time, stamp.relative,
             stamp.relative + float(x[0]), stamp.relative + float(x[-1]),
-            analyse_record(t, v, settings.threshold, settings.hysteresis),
+            analyse_record(t, v, settings.threshold, settings.hysteresis), supply,
         ))
     stamps = {(a.scope_date, a.scope_time, a.relative) for a in acquisitions}
     if len(acquisitions) > 1 and len(stamps) == 1:
@@ -851,9 +939,12 @@ def monitor(
         previous_stop = stopped
         note = "  MEMORY FULL: the scope stopped early, edges after that were not captured" if memory_full else ""
         state = "; contact open at the end" if tracker.pending is not None else ""
+        causes = ""
+        if tracker.supply_monitored:
+            causes = f" ({tracker.antenna_count} antenna, {tracker.supply_count} supply cable)"
         report(
             f"interval {number}: {len(acquisitions)} acquisition(s), {len(dropouts)} dropout(s) final, "
-            f"{tracker.count} in total{state}{note}"
+            f"{tracker.count} in total{causes}{state}{note}"
         )
     for d in tracker.finish():
         log.write_dropout(d)

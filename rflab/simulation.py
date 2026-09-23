@@ -166,6 +166,9 @@ class SimulatedBench:
         self.contact_openings: list[tuple[float, float]] = [
             (0.5, 0.5 + 2e-6), (1.0, 1.0 + 100e-6), (1.5, 1.5 + 1e-6), (1.5 + 3e-6, 1.5 + 4e-6),
         ]
+        #: When the simulated supply cable is open, as ``(opens, closes)`` seconds into a run: the
+        #: contact channel drops to 0 V as for an antenna dropout, but so does the supply channel.
+        self.supply_openings: list[tuple[float, float]] = []
         #: The simulated scope cannot trigger for this long after a record ends (re-arm time).
         self.blind_seconds = 1e-6
         #: Seconds between forced acquisitions of a run, if several are forced; the first is at the run start.
@@ -350,7 +353,8 @@ class SimulatedBench:
         slope = _last(w, r"^TRIG1:EDGE:SLOP (\S+)$") or "POS"
         # the k-th forced acquisition of a run lands at k × forced_spacing seconds (the first at 0)
         events: list[tuple[float, Optional[bool]]] = [(k * self.forced_spacing, None) for k in range(forced_count)]
-        events += [(a, True) for a, _ in self.contact_openings] + [(b, False) for _, b in self.contact_openings]
+        low_spans = _union(self.contact_openings + self.supply_openings)   # the contact channel is low in both
+        events += [(a, True) for a, _ in low_spans] + [(b, False) for _, b in low_spans]
         triggers: list[float] = []
         armed_at = 0.0
         for t, falling in sorted(events, key=lambda e: e[0]):
@@ -367,20 +371,36 @@ class SimulatedBench:
         wanted = int(_last_float(self.scope_backend.writes, r"^ACQ:SEGM:MAX (\S+)$", 1e6))
         return min(wanted, self.scope_segment_capacity)
 
-    def _contact_record(self, trigger: float, t: np.ndarray, peak_detect: bool) -> np.ndarray:
-        """The contact voltage around `trigger`: 1 V closed, 0 V open; min/max per sample interval for peak detect."""
+    def _channel_record(self, channel: int, trigger: float, t: np.ndarray, peak_detect: bool) -> np.ndarray:
+        """A channel's voltage around `trigger`; min/max per sample interval for peak detect.
+
+        The trigger-source channel is the coax: 1 V closed, 0 V while the
+        contact or the supply cable is open. Any other channel is the antenna
+        body: 1 V with current flowing, 2 V while the antenna is open (the
+        supply is there, nothing draws current), 0 V while the supply cable
+        is open.
+        """
+        source = int(_last(self.scope_backend.writes, r"^TRIG1:SOUR CHAN(\d)$") or "1")
+        if channel == source:
+            spans = [(a, b, 0.0) for a, b in _union(self.contact_openings + self.supply_openings)]
+        else:
+            spans = [(a, b, 2.0) for a, b in self.contact_openings] + [(a, b, 0.0) for a, b in self.supply_openings]
         at = trigger + t
         step = float(t[1] - t[0]) if len(t) > 1 else 0.0
         if not peak_detect:
             v = np.ones(len(t))
-            for a, b in self.contact_openings:
-                v[(at >= a) & (at < b)] = 0.0
+            for a, b, level in spans:
+                v[(at >= a) & (at < b)] = level
             return v
         low = np.ones(len(t))
         high = np.ones(len(t))
-        for a, b in self.contact_openings:
-            low[(at < b) & (at + step > a)] = 0.0          # the sample interval touches the opening
-            high[(at >= a) & (at + step <= b)] = 0.0       # the sample interval lies inside it
+        for a, b, level in spans:
+            touches = (at < b) & (at + step > a)           # the sample interval touches the span
+            inside = (at >= a) & (at + step <= b)          # the sample interval lies inside it
+            low[touches] = np.minimum(low[touches], level)
+            high[touches] = np.maximum(high[touches], level)
+            low[inside] = level
+            high[inside] = level
         return np.column_stack([low, high]).ravel()
 
     def _scope(self, query: str) -> str:
@@ -411,6 +431,8 @@ class SimulatedBench:
         index = int(_last_float(w, r"^CHAN\d:WAV1:HIST:CURR (\S+)$", 0.0))
         if query.endswith("HIST:CURR?"):
             return str(index)
+        addressed = re.match(r"^CHAN(\d):", query)
+        channel = int(addressed.group(1)) if addressed else 1
         if not triggers or run_start is None:
             return ""
         trigger = triggers[count - 1 + index]
@@ -424,14 +446,25 @@ class SimulatedBench:
         window = _last_float(w, r"^TIM:RANG (\S+)$", 5e-5)
         reference = _last_float(w, r"^TIM:REF (\S+)$", 20.0) / 100
         rate = _last_float(w, r"^ACQ:SRAT (\S+)$", 2e8)
-        peak_detect = (_last(w, r"^CHAN\d:WAV1:TYPE (\S+)$") or "SAMP") == "PDET"
+        peak_detect = (_last(w, rf"^CHAN{channel}:WAV1:TYPE (\S+)$") or "SAMP") == "PDET"
         points = int(round(window * rate)) + 1
         if query.endswith("DATA:HEAD?"):
             return f"{_num(-window * reference)},{_num(window * (1 - reference))},{points},{2 if peak_detect else 1}"
         if query.endswith("DATA?"):
             t = np.linspace(-window * reference, window * (1 - reference), points)
-            return ",".join(_num(x) for x in self._contact_record(trigger, t, peak_detect))
+            return ",".join(_num(x) for x in self._channel_record(channel, trigger, t, peak_detect))
         return ""
+
+
+def _union(spans: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Merge overlapping or touching ``(start, end)`` spans, sorted."""
+    merged: list[tuple[float, float]] = []
+    for a, b in sorted(spans):
+        if merged and a <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+        else:
+            merged.append((a, b))
+    return merged
 
 
 def _index_from_end(writes: list[str], pattern: str) -> int:

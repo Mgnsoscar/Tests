@@ -124,7 +124,14 @@ RTO64 for as long as a temperature, shock or vibration test runs. The circuit:
 a lab supply at 2 V (50 mA limit) through a 50 Ω resistor soldered to the
 antenna body, through the contact under test, down the coax into the scope's
 50 Ω input, supply negative to the DUT ground. Closed contact = 1 V at the
-scope, open = 0 V within nanoseconds. The scope triggers on **either** edge
+scope, open = 0 V within nanoseconds. A second wire from the antenna body to
+another scope channel on its 1 MΩ input tells which side of the contact
+opened: it sits at 1 V with current flowing, rises to 2 V when the antenna's
+own wiring opens (the supply is there, nothing draws current), and drops to
+0 V when the supply cable breaks. Every dropout gets a **cause** column,
+`antenna` or `supply`, from that channel's records, and the console counts
+them separately; set `supply_channel=None` to monitor the coax alone. The
+scope triggers on **either** edge
 through 0.5 V in NORMAL mode with fast segmentation, so every opening and
 every closing is captured with its own timestamp, and each record is taken in
 peak-detect mode, so any crossing the trigger saw is in the record too.

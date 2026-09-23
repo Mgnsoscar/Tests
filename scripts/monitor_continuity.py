@@ -1,8 +1,12 @@
 """Watch a DUT's electrical contact on the oscilloscope for the length of an environmental test.
 
 Circuit: lab supply 2 V (current limit 50 mA) -> 50 Ω resistor soldered to the
-antenna body -> the contact under test -> coax -> scope channel, 50 Ω input.
+antenna body -> the contact under test -> coax -> scope channel 1, 50 Ω input.
 Supply negative to the DUT ground. Closed contact = 1 V at the scope, open = 0 V.
+A second wire from the antenna body to scope channel 2 (1 MΩ input) says which
+side opened: it stays at 1 V with current flowing, rises to 2 V when the
+antenna's own wiring opens, and drops to 0 V when the supply cable breaks. Every
+dropout is attributed "antenna" or "supply" from it.
 
 Edit the block below, then:
 
@@ -48,6 +52,9 @@ SETTINGS = ContinuitySettings(
     interval=Q(60, "s"),             # how often the acquisitions are read out and saved ...
     readout_when_full=0.9,           # ... or sooner, once the scope holds this fraction of its segments
     merge_within=Q(10, "us"),        # openings closer together than this are one bouncing dropout
+    supply_channel=2,                # the wire from the antenna body (1 MΩ input); None to monitor the coax alone
+    supply_threshold=Q(0.5, "V"),    # below this on that channel during a dropout: the supply cable, not the antenna
+    supply_level=Q(2.0, "V"),        # the supply voltage, to place channel 2's 0 – 2 V swing on screen
 )
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -81,6 +88,11 @@ def main() -> None:
         "Scope clock minus PC clock [s]": f"{offset:.1f}",
         "Instrument": scope.get_id(),
         "Channel": str(settings.channel),
+        "Supply channel": (
+            f"{settings.supply_channel} on the antenna body (1 MOhm): a dropout is the supply cable's when it "
+            f"drops below {settings.supply_threshold:~}, else the antenna's"
+            if settings.supply_channel is not None else "none"
+        ),
         "Trigger": f"either edge through {settings.threshold:~}; contact open below that level, "
                    f"hysteresis {settings.hysteresis:~} in the record analysis",
         "Record": f"{settings.window:~} at {settings.sample_rate:~}, peak detect",
