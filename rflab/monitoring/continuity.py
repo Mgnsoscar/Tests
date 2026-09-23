@@ -895,8 +895,8 @@ def read_levels(scope: RTO64, settings: ContinuitySettings, sleep: Callable[[flo
     scope.run_single(wait_for_completion=False)
     sleep(_ARM_DELAY)
     scope.trigger.force()
-    scope.wait_for_instrument()
-    scope.stop()
+    sleep(_ARM_DELAY)                            # let the forced acquisition complete; never *OPC? while a
+    scope.stop()                                 # single run of thousands of acquisitions is in progress
     scope.wait_for_instrument()
     ch, sc = settings.channel, settings.supply_channel
     oldest = -(max(scope.history.available(), 1) - 1)     # the forced acquisition is the first of the run
