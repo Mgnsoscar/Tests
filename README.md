@@ -121,18 +121,20 @@ need no instruments.
 
 `scripts/monitor_continuity.py` watches a DUT's electrical contact on the
 RTO64 for as long as a temperature, shock or vibration test runs. The circuit:
-a lab supply at 2 V (50 mA limit) through a 50 Ω resistor soldered to the
-antenna body, through the contact under test, down the coax into the scope's
-50 Ω input, supply negative to the DUT ground. Closed contact = 1 V at the
-scope, open = 0 V within nanoseconds. A second wire from the antenna body to
-another scope channel on its 1 MΩ input tells which side of the contact
-opened: it sits at 1 V with current flowing, rises to 2 V when the antenna's
-own wiring opens (the supply is there, nothing draws current), and drops to
-0 V when the supply cable breaks. Every dropout gets a **cause** column,
-`antenna` or `supply`, from that channel's records, and the console counts
-them separately; set `supply_channel=None` to monitor the coax alone. The
-scope triggers on **either** edge
-through 0.5 V in NORMAL mode with fast segmentation, so every opening and
+a lab supply (5 V, 50 mA limit) through a series resistor of about 580 Ω
+into the antenna body, through the contact under test, down the antenna's
+coax into scope channel 1; a second coax, cut open at one end, from the
+antenna body into scope channel 2 on its 1 MΩ input. Measured: with the
+contact closed channel 1 reads 2.2 V and channel 2 1.1 V; when the antenna's
+own wiring opens channel 1 drops to 0 V within nanoseconds and channel 2
+rises to 2.2 V (the supply is there, nothing draws current); when the supply
+cable breaks both read 0 V. So channel 2 tells which side of the contact
+opened: every dropout gets a **cause** column, `antenna` or `supply`, and the
+console counts them separately; set `supply_channel=None` to monitor the
+coax alone. At start the script takes one acquisition and prints both
+levels against the expected ones, with a warning if the wiring or the
+settings do not fit. The scope triggers on **either** edge
+through 1.1 V in NORMAL mode with fast segmentation, so every opening and
 every closing is captured with its own timestamp, and each record is taken in
 peak-detect mode, so any crossing the trigger saw is in the record too.
 Every minute the script stops the scope, reads every stored acquisition,
@@ -140,8 +142,8 @@ analyses its record for the threshold crossings it holds, stitches the
 crossings of the interval into one timeline and pairs each falling crossing
 with the rising one that closes it — nothing is inferred from the order of
 triggers alone, and openings closer than 10 µs count as one bouncing
-dropout. The record analysis uses a hysteresis (open below 0.4 V, closed
-again only above 0.6 V by default), so a signal lingering at the threshold
+dropout. The record analysis uses a hysteresis (open below 0.8 V, closed
+again only above 1.4 V by default), so a signal lingering at the threshold
 with noise on it is not a train of crossings, and the state at each end of
 a record is decided by the level of its head and tail rather than by the
 nearest crossing, so chatter ending on the wrong edge does not leave a

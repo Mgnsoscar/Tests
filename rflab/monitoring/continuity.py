@@ -2,21 +2,31 @@
 
 The circuit
 -----------
-A lab supply at 2 V drives 20 mA through a 50 Ω resistor soldered to the
-antenna body, through the contact under test, down the coax into the scope's
-50 Ω input. With the contact closed the scope sees 1 V; when the contact opens,
-the scope side collapses to 0 V within nanoseconds. Contact open = voltage
-below the threshold.
+A lab supply (5 V, 50 mA limit) feeds the antenna body through a series
+resistor (about 580 Ω); the current goes through the contact under test and
+down the antenna's coax into scope channel 1. A second coax, cut open at one
+end, connects the antenna body itself to scope channel 2. Measured with
+everything connected:
+
+===================================  ==========  ==========
+situation                            channel 1   channel 2
+===================================  ==========  ==========
+contact closed, current flowing      2.2 V       1.1 V
+antenna's own wiring open            0 V         2.2 V
+supply cable to the body open        0 V         0 V
+===================================  ==========  ==========
+
+Contact open = channel 1 below the threshold (1.1 V, half the closed level).
+When the contact opens the coax side collapses within nanoseconds.
 
 Which side opened
 -----------------
-A dropout on the coax can be the antenna's own wiring or the cable that
-supplies the antenna body. A second scope channel on the antenna body (a
-wire to a 1 MΩ input) tells them apart: with current flowing it sits at 1 V;
-when the antenna opens it rises to the full supply voltage, because nothing
-draws current any more; when the supply cable breaks it falls to 0 V. Every
-dropout is attributed from that channel's records: *antenna* when the supply
-stayed on the body, *supply* when it was gone.
+A dropout on the coax can be the antenna's own wiring or the supply cable to
+the body. Channel 2 tells them apart: when the antenna opens the body rises
+to 2.2 V (the supply is there, the antenna no longer draws current); when the
+supply cable breaks it falls to 0 V. Every dropout is attributed from that
+channel's records: *antenna* when the body stayed above `supply_threshold`,
+*supply* when it fell below it.
 
 How the scope catches every edge
 --------------------------------
@@ -93,7 +103,9 @@ __all__ = [
     "ContinuityLog",
     "DropoutTracker",
     "ScopeSetup",
+    "Levels",
     "configure",
+    "read_levels",
     "analyse_record",
     "read_interval",
     "interval_crossings",
@@ -112,15 +124,15 @@ class ContinuitySettings:
 
     #: Scope channel the coax is connected to.
     channel: int = 1
-    #: Voltage with the contact closed (2 V through 50 Ω + the 50 Ω input = 1 V).
-    closed_level: Quantity = Q(1.0, "V")
+    #: Voltage on the coax channel with the contact closed (measured: 2.2 V).
+    closed_level: Quantity = Q(2.2, "V")
     #: The trigger level, and the level below which the contact counts as open.
-    threshold: Quantity = Q(0.5, "V")
+    threshold: Quantity = Q(1.1, "V")
     #: Hysteresis for the record analysis: the contact counts as open once the
     #: voltage is below threshold − hysteresis and as closed again only above
     #: threshold + hysteresis, so noise on a signal near the threshold is not
     #: a train of crossings.
-    hysteresis: Quantity = Q(100, "mV")
+    hysteresis: Quantity = Q(300, "mV")
     #: The record captured around each edge (20 % before it), and its sample rate.
     #: Peak detect keeps the min and max of every sample interval, so the rate
     #: only sets the time resolution of the crossings, not what is caught.
@@ -135,19 +147,21 @@ class ContinuitySettings:
     readout_when_full: float = 0.9
     #: Openings closer together than this are one bouncing dropout.
     merge_within: Quantity = Q(10, "us")
-    #: Vertical scale, so 0 V and 1 V are both well inside the screen.
-    scale: Quantity = Q(200, "mV")
+    #: Vertical scale, so 0 V and the closed level are both well inside the screen.
+    scale: Quantity = Q(500, "mV")
     #: A second scope channel wired to the antenna body itself (the supply side of the
     #: contact), on the 1 MΩ input so it does not load the node, or ``None``. With current
-    #: flowing it sits at `closed_level`; when the antenna's own wiring opens it rises to
-    #: the supply voltage (nothing draws current any more); when the supply cable breaks
-    #: it drops to 0 V. So it says which side of the contact a dropout is on.
+    #: flowing it sits at `supply_normal`; when the antenna's own wiring opens it rises to
+    #: `supply_open` (nothing draws current any more); when the supply cable breaks it drops
+    #: to 0 V. So it says which side of the contact a dropout is on.
     supply_channel: Optional[int] = None
     #: Below this on the supply channel during a dropout, the supply was gone: the cause is
     #: the supply cable, not the antenna.
     supply_threshold: Quantity = Q(0.5, "V")
-    #: The supply voltage, and the supply channel's scale: its 0 – 2 V swing on screen.
-    supply_level: Quantity = Q(2.0, "V")
+    #: The supply channel's level with current flowing, and with the antenna open (measured).
+    supply_normal: Quantity = Q(1.1, "V")
+    supply_open: Quantity = Q(2.2, "V")
+    #: The supply channel's scale, so 0 V and `supply_open` are both on screen.
     supply_scale: Quantity = Q(500, "mV")
 
     @property
@@ -801,7 +815,7 @@ def configure(scope: RTO64, settings: ContinuitySettings) -> ScopeSetup:
         sc.set_coupling("DC_1M")                 # high impedance: must not load the antenna body node
         sc.set_bandwidth_limit("FULL")
         sc.set_scale(settings.supply_scale)
-        sc.set_offset(settings.supply_level / 2)  # centre the 0 V – supply swing on screen
+        sc.set_offset(settings.supply_open / 2)  # centre the 0 V – supply_open swing on screen
         sc.set_arithmetics("OFF")
         sc.set_decimation("PEAK_DETECT")
     scope.timebase.set_range(settings.window)
@@ -831,6 +845,70 @@ def configure(scope: RTO64, settings: ContinuitySettings) -> ScopeSetup:
         scope.acquisition.get_record_length(),
         scope.acquisition.get_sample_rate(),
     )
+
+
+@dataclass(frozen=True)
+class Levels:
+    """The channels' mean voltages right now, from one forced acquisition: the wiring check."""
+
+    contact: float
+    supply: Optional[float]
+
+    def check(self, settings: ContinuitySettings) -> list[str]:
+        """Plain-language warnings when the levels do not match the settings; empty when all is well."""
+        warnings: list[str] = []
+        closed = float(settings.closed_level.to("V").magnitude)
+        threshold = float(settings.threshold.to("V").magnitude)
+        if self.contact < threshold:
+            warnings.append(
+                f"channel {settings.channel} (the coax) reads {self.contact:.2f} V: the contact is open, "
+                f"or the supply is off, or the trigger level {threshold:g} V does not fit this circuit"
+            )
+        elif abs(self.contact - closed) > 0.25 * closed:
+            warnings.append(
+                f"channel {settings.channel} (the coax) reads {self.contact:.2f} V, but {closed:g} V is expected "
+                f"with the contact closed: check the supply voltage, the series resistor and the 50 Ω input"
+            )
+        if self.supply is not None and settings.supply_channel is not None:
+            normal = float(settings.supply_normal.to("V").magnitude)
+            supply_threshold = float(settings.supply_threshold.to("V").magnitude)
+            if self.supply < supply_threshold:
+                warnings.append(
+                    f"channel {settings.supply_channel} (the antenna body) reads {self.supply:.2f} V: no supply on the "
+                    "body, or the body wire is not connected — every dropout would be blamed on the supply cable"
+                )
+            elif abs(self.supply - normal) > 0.25 * normal:
+                warnings.append(
+                    f"channel {settings.supply_channel} (the antenna body) reads {self.supply:.2f} V, but {normal:g} V "
+                    "is expected with current flowing: check the wire and that the channel is the 1 MΩ input"
+                )
+        return warnings
+
+
+def read_levels(scope: RTO64, settings: ContinuitySettings, sleep: Callable[[float], None] = _time.sleep) -> Levels:
+    """One forced acquisition now, and the mean level of each channel in it.
+
+    Run after :func:`configure`, before the test: with the contact closed the
+    coax channel must read `closed_level` and the supply channel
+    `supply_normal`, or the wiring or the settings are wrong.
+    """
+    scope.run_single(wait_for_completion=False)
+    sleep(_ARM_DELAY)
+    scope.trigger.force()
+    scope.wait_for_instrument()
+    scope.stop()
+    scope.wait_for_instrument()
+    ch, sc = settings.channel, settings.supply_channel
+    oldest = -(max(scope.history.available(), 1) - 1)     # the forced acquisition is the first of the run
+    scope.history.enable(ch, True)
+    scope.history.select(ch, oldest)
+    contact = float(np.mean(scope.waveform.get_data(ch)[1].to("V").magnitude))
+    supply = None
+    if sc is not None:
+        scope.history.enable(sc, True)
+        scope.history.select(sc, oldest)
+        supply = float(np.mean(scope.waveform.get_data(sc)[1].to("V").magnitude))
+    return Levels(contact, supply)
 
 
 def read_interval(

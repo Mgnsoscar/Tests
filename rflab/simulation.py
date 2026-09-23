@@ -169,6 +169,11 @@ class SimulatedBench:
         #: When the simulated supply cable is open, as ``(opens, closes)`` seconds into a run: the
         #: contact channel drops to 0 V as for an antenna dropout, but so does the supply channel.
         self.supply_openings: list[tuple[float, float]] = []
+        #: The levels measured on the real circuit: the coax channel with the contact closed, the
+        #: antenna-body channel with current flowing, and the body channel with the antenna open.
+        self.closed_level = 2.2
+        self.body_level = 1.1
+        self.body_open_level = 2.2
         #: The simulated scope cannot trigger for this long after a record ends (re-arm time).
         self.blind_seconds = 1e-6
         #: Seconds between forced acquisitions of a run, if several are forced; the first is at the run start.
@@ -374,26 +379,29 @@ class SimulatedBench:
     def _channel_record(self, channel: int, trigger: float, t: np.ndarray, peak_detect: bool) -> np.ndarray:
         """A channel's voltage around `trigger`; min/max per sample interval for peak detect.
 
-        The trigger-source channel is the coax: 1 V closed, 0 V while the
-        contact or the supply cable is open. Any other channel is the antenna
-        body: 1 V with current flowing, 2 V while the antenna is open (the
-        supply is there, nothing draws current), 0 V while the supply cable
-        is open.
+        The trigger-source channel is the coax: `closed_level` closed, 0 V
+        while the contact or the supply cable is open. Any other channel is
+        the antenna body: `body_level` with current flowing, `body_open_level`
+        while the antenna is open (the supply is there, nothing draws
+        current), 0 V while the supply cable is open.
         """
         source = int(_last(self.scope_backend.writes, r"^TRIG1:SOUR CHAN(\d)$") or "1")
         if channel == source:
+            rest = self.closed_level
             spans = [(a, b, 0.0) for a, b in _union(self.contact_openings + self.supply_openings)]
         else:
-            spans = [(a, b, 2.0) for a, b in self.contact_openings] + [(a, b, 0.0) for a, b in self.supply_openings]
+            rest = self.body_level
+            spans = [(a, b, self.body_open_level) for a, b in self.contact_openings]
+            spans += [(a, b, 0.0) for a, b in self.supply_openings]
         at = trigger + t
         step = float(t[1] - t[0]) if len(t) > 1 else 0.0
         if not peak_detect:
-            v = np.ones(len(t))
+            v = np.full(len(t), rest)
             for a, b, level in spans:
                 v[(at >= a) & (at < b)] = level
             return v
-        low = np.ones(len(t))
-        high = np.ones(len(t))
+        low = np.full(len(t), rest)
+        high = np.full(len(t), rest)
         for a, b, level in spans:
             touches = (at < b) & (at + step > a)           # the sample interval touches the span
             inside = (at >= a) & (at + step <= b)          # the sample interval lies inside it
