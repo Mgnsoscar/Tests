@@ -3,7 +3,7 @@
 The circuit
 -----------
 A lab supply (5 V, 50 mA limit) feeds the antenna body through a series
-resistor (about 580 Ω); the current goes through the contact under test and
+resistor; the current goes through the contact under test and
 down the antenna's coax into scope channel 1. A second coax, cut open at one
 end, connects the antenna body itself to scope channel 2. Measured with
 everything connected:
@@ -11,19 +11,19 @@ everything connected:
 ===================================  ==========  ==========
 situation                            channel 1   channel 2
 ===================================  ==========  ==========
-contact closed, current flowing      2.2 V       1.1 V
-antenna's own wiring open            0 V         2.2 V
+contact closed, current flowing      2.35 V      2.35 V
+antenna's own wiring open            0 V         5 V
 supply cable to the body open        0 V         0 V
 ===================================  ==========  ==========
 
-Contact open = channel 1 below the threshold (1.1 V, half the closed level).
+Contact open = channel 1 below the threshold (1.2 V, half the closed level).
 When the contact opens the coax side collapses within nanoseconds.
 
 Which side opened
 -----------------
 A dropout on the coax can be the antenna's own wiring or the supply cable to
 the body. Channel 2 tells them apart: when the antenna opens the body rises
-to 2.2 V (the supply is there, the antenna no longer draws current); when the
+to the full 5 V (the supply is there, the antenna no longer draws current); when the
 supply cable breaks it falls to 0 V. Every dropout is attributed from that
 channel's records: *antenna* when the body stayed above `supply_threshold`,
 *supply* when it fell below it.
@@ -124,10 +124,10 @@ class ContinuitySettings:
 
     #: Scope channel the coax is connected to.
     channel: int = 1
-    #: Voltage on the coax channel with the contact closed (measured: 2.2 V).
-    closed_level: Quantity = Q(2.2, "V")
+    #: Voltage on the coax channel with the contact closed (measured: 2.35 V).
+    closed_level: Quantity = Q(2.35, "V")
     #: The trigger level, and the level below which the contact counts as open.
-    threshold: Quantity = Q(1.1, "V")
+    threshold: Quantity = Q(1.2, "V")
     #: Hysteresis for the record analysis: the contact counts as open once the
     #: voltage is below threshold − hysteresis and as closed again only above
     #: threshold + hysteresis, so noise on a signal near the threshold is not
@@ -159,10 +159,10 @@ class ContinuitySettings:
     #: the supply cable, not the antenna.
     supply_threshold: Quantity = Q(0.5, "V")
     #: The supply channel's level with current flowing, and with the antenna open (measured).
-    supply_normal: Quantity = Q(1.1, "V")
-    supply_open: Quantity = Q(2.2, "V")
+    supply_normal: Quantity = Q(2.35, "V")
+    supply_open: Quantity = Q(5.0, "V")
     #: The supply channel's scale, so 0 V and `supply_open` are both on screen.
-    supply_scale: Quantity = Q(500, "mV")
+    supply_scale: Quantity = Q(1, "V")
 
     @property
     def pre_trigger(self) -> Quantity:

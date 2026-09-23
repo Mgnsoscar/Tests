@@ -171,9 +171,9 @@ class SimulatedBench:
         self.supply_openings: list[tuple[float, float]] = []
         #: The levels measured on the real circuit: the coax channel with the contact closed, the
         #: antenna-body channel with current flowing, and the body channel with the antenna open.
-        self.closed_level = 2.2
-        self.body_level = 1.1
-        self.body_open_level = 2.2
+        self.closed_level = 2.35
+        self.body_level = 2.35
+        self.body_open_level = 5.0
         #: The simulated scope cannot trigger for this long after a record ends (re-arm time).
         self.blind_seconds = 1e-6
         #: Seconds between forced acquisitions of a run, if several are forced; the first is at the run start.

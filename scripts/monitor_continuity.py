@@ -1,10 +1,10 @@
 """Watch a DUT's electrical contact on the oscilloscope for the length of an environmental test.
 
-Circuit: lab supply 5 V (current limit 50 mA) -> ~580 Ω resistor -> antenna
+Circuit: lab supply 5 V (current limit 50 mA) -> series resistor -> antenna
 body -> the contact under test -> the antenna's coax -> scope channel 1. A
 second coax, cut open at one end, from the antenna body -> scope channel 2.
-Measured: contact closed, channel 1 at 2.2 V and channel 2 at 1.1 V; antenna
-open, channel 1 at 0 V and channel 2 at 2.2 V; supply cable open, both at 0 V.
+Measured: contact closed, both channels at 2.35 V; antenna open, channel 1 at
+0 V and channel 2 at the full 5 V; supply cable open, both at 0 V.
 Every dropout is attributed "antenna" or "supply" from channel 2.
 
 At start the script takes one acquisition and prints both levels against
@@ -47,9 +47,9 @@ DUT = "Antenna X SN001"              # goes into the folder and file names
 TEST = "vibration"                   # goes into the file names: which environmental test this is
 SETTINGS = ContinuitySettings(
     channel=1,                       # scope channel the coax is on
-    closed_level=Q(2.2, "V"),        # measured on channel 1 with the contact closed
-    threshold=Q(1.1, "V"),           # trigger level; below it the contact counts as open ...
-    hysteresis=Q(300, "mV"),         # ... open below 0.8 V, closed again only above 1.4 V (noise is not a crossing)
+    closed_level=Q(2.35, "V"),       # measured on channel 1 with the contact closed
+    threshold=Q(1.2, "V"),           # trigger level; below it the contact counts as open ...
+    hysteresis=Q(300, "mV"),         # ... open below 0.9 V, closed again only above 1.5 V (noise is not a crossing)
     window=Q(50, "us"),              # record kept around each edge, 20 % before it
     sample_rate=Q(50, "MHz"),        # 20 ns per point in that record (peak detect: nothing shorter is missed)
     segments=10_000,                 # acquisitions the scope can hold per interval before it stops early
@@ -58,8 +58,8 @@ SETTINGS = ContinuitySettings(
     merge_within=Q(10, "us"),        # openings closer together than this are one bouncing dropout
     supply_channel=2,                # the coax from the antenna body (1 MΩ input); None to monitor the coax alone
     supply_threshold=Q(0.5, "V"),    # below this on that channel during a dropout: the supply cable, not the antenna
-    supply_normal=Q(1.1, "V"),       # measured on channel 2 with current flowing ...
-    supply_open=Q(2.2, "V"),         # ... and with the antenna open (nothing draws current)
+    supply_normal=Q(2.35, "V"),      # measured on channel 2 with current flowing ...
+    supply_open=Q(5.0, "V"),         # ... and with the antenna open (the full supply: nothing draws current)
 )
 # ─────────────────────────────────────────────────────────────────────────────
 

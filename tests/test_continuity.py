@@ -60,12 +60,12 @@ def test_configure_sets_either_edge_peak_detect_and_segmentation(bench: Simulate
     w = bench.scope_backend.writes
     assert "SYST:DISP:UPD OFF" in w
     assert "CHAN1:COUP DC" in w                      # the 50 Ω input, so the node collapses in ns
-    assert "CHAN1:SCAL 0.5" in w and "CHAN1:OFFS 1.1" in w
+    assert "CHAN1:SCAL 0.5" in w and "CHAN1:OFFS 1.175" in w
     assert "CHAN1:WAV1:ARIT OFF" in w and "CHAN1:WAV1:TYPE PDET" in w   # peak-detect decimation: no crossing escapes
     assert "TIM:RANG 5e-05" in w and "TIM:REF 20.0" in w
     assert "ACQ:SRAT 50000000.0" in w
     assert "ACQ:COUN 100" in w and "ACQ:SEGM:STAT ON" in w and "ACQ:SEGM:MAX 100" in w
-    assert "TRIG1:SOUR CHAN1" in w and "TRIG1:EDGE:SLOP EITH" in w and "TRIG1:LEV1 1.1" in w
+    assert "TRIG1:SOUR CHAN1" in w and "TRIG1:EDGE:SLOP EITH" in w and "TRIG1:LEV1 1.2" in w
     assert "TRIG1:MODE NORM" in w and "TRIG:HOLD:MODE OFF" in w
     assert "CHAN1:WAV1:HIST:STAT ON" in w
 
@@ -85,7 +85,7 @@ def test_read_interval_returns_every_acquisition_oldest_first_with_the_forced_on
     assert acquisitions[2].analysis.ends_open is True                # still open at the end of its record
     assert acquisitions[3].analysis.starts_open is True              # the rising edge's record starts open
     assert len(acquisitions[4].analysis.crossings) == 4              # the bounce: F R F R
-    assert acquisitions[1].analysis.minimum == 0.0 and acquisitions[1].analysis.maximum == 2.2
+    assert acquisitions[1].analysis.minimum == 0.0 and acquisitions[1].analysis.maximum == 2.35
     # the history was entered again after the stop and walked from the oldest to the newest acquisition,
     # waiting for the instrument after every selection
     w = bench.scope_backend.writes
@@ -327,7 +327,7 @@ def test_configure_sets_up_the_supply_channel_on_the_high_impedance_input(bench:
     configure(bench.scope, SUPPLY)
     w = bench.scope_backend.writes
     assert "CHAN2:STAT ON" in w and "CHAN2:COUP DCL" in w              # 1 MΩ: must not load the antenna body node
-    assert "CHAN2:SCAL 0.5" in w and "CHAN2:OFFS 1.1" in w
+    assert "CHAN2:SCAL 1.0" in w and "CHAN2:OFFS 2.5" in w
     assert "CHAN2:WAV1:TYPE PDET" in w and "CHAN2:WAV1:HIST:STAT ON" in w
     assert "TRIG1:SOUR CHAN1" in w                                     # the coax still triggers
     with pytest.raises(ValueError):
@@ -347,13 +347,13 @@ def test_supply_channel_tells_antenna_dropouts_from_supply_cable_dropouts(bench:
     ]
     supply = [(a.supply.minimum, a.supply.maximum) for a in acquisitions if a.supply is not None]
     assert len(supply) == 7
-    assert supply[0] == (1.1, 1.1)
-    assert supply[1] == (1.1, 2.2) and supply[2] == (1.1, 2.2)          # antenna open: the body rises to 2.2 V
-    assert supply[5] == (0.0, 1.1) and supply[6] == (0.0, 1.1)          # supply gone: the body drops to 0 V
+    assert supply[0] == (2.35, 2.35)
+    assert supply[1] == (2.35, 5.0) and supply[2] == (2.35, 5.0)        # antenna open: the body rises to 5 V
+    assert supply[5] == (0.0, 2.35) and supply[6] == (0.0, 2.35)        # supply gone: the body drops to 0 V
     tracker = DropoutTracker(SUPPLY)
     dropouts = tracker.feed(1, acquisitions, False)
     assert [d.cause for d in dropouts] == ["antenna", "antenna", "antenna", "supply"]
-    assert [d.supply_minimum for d in dropouts] == [1.1, 1.1, 1.1, 0.0]
+    assert [d.supply_minimum for d in dropouts] == [2.35, 2.35, 2.35, 0.0]
     assert dropouts[3].duration * 1e6 == pytest.approx(50.0, abs=0.05)
     assert (tracker.count, tracker.antenna_count, tracker.supply_count) == (4, 3, 1)
     # without a supply channel nothing is attributed
@@ -382,11 +382,11 @@ def test_monitor_reports_and_logs_the_cause(tmp_path: Path, bench: SimulatedBenc
     header, *rows = (tmp_path / "run dropouts.csv").read_text(encoding="utf-8").splitlines()
     assert header.endswith("Minimum [V],Cause,Supply min [V],Note")
     assert [r.split(",")[9:11] for r in rows] == [
-        ["antenna", "1.1000"], ["antenna", "1.1000"], ["antenna", "1.1000"], ["supply", "0.0000"],
+        ["antenna", "2.3500"], ["antenna", "2.3500"], ["antenna", "2.3500"], ["supply", "0.0000"],
     ]
     header, *rows = (tmp_path / "run acquisitions.csv").read_text(encoding="utf-8").splitlines()
     assert header.endswith("Maximum [V],Supply min [V],Supply max [V]")
-    assert rows[1].split(",")[-2:] == ["1.1000", "2.2000"] and rows[-1].split(",")[-2:] == ["0.0000", "1.1000"]
+    assert rows[1].split(",")[-2:] == ["2.3500", "5.0000"] and rows[-1].split(",")[-2:] == ["0.0000", "2.3500"]
     log.close()
 
 
@@ -394,16 +394,16 @@ def test_read_levels_is_the_wiring_check(bench: SimulatedBench) -> None:
     scope = bench.scope
     configure(scope, SUPPLY)
     levels = read_levels(scope, SUPPLY, sleep=lambda _: None)
-    assert levels.contact == pytest.approx(2.2) and levels.supply == pytest.approx(1.1)
+    assert levels.contact == pytest.approx(2.35) and levels.supply == pytest.approx(2.35)
     assert levels.check(SUPPLY) == []
     w = bench.scope_backend.writes
     assert w.count("RUNS") == 1 and w.count("TRIG1:FORC") == 1 and w.count("STOP") == 1
     # and what it says when things are wrong
-    assert "the contact is open" in Levels(0.0, 1.1).check(SUPPLY)[0]
-    assert "2.2 V is expected" in Levels(1.4, 1.1).check(SUPPLY)[0]
-    assert "no supply on the body" in Levels(2.2, 0.0).check(SUPPLY)[0]
-    assert "1.1 V is expected" in Levels(2.2, 2.2).check(SUPPLY)[0]
-    assert Levels(2.2, None).check(SUPPLY) == [] and Levels(2.2, 0.0).check(SETTINGS) == []
+    assert "the contact is open" in Levels(0.0, 2.35).check(SUPPLY)[0]
+    assert "2.35 V is expected" in Levels(1.5, 2.35).check(SUPPLY)[0]
+    assert "no supply on the body" in Levels(2.35, 0.0).check(SUPPLY)[0]
+    assert "2.35 V is expected" in Levels(2.35, 5.0).check(SUPPLY)[0]
+    assert Levels(2.35, None).check(SUPPLY) == [] and Levels(2.35, 0.0).check(SETTINGS) == []
 
 
 # -- the loop and the files ----------------------------------------------------
